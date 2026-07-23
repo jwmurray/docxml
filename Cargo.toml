@@ -1,0 +1,14 @@
+[package]
+name = "docxml"
+version = "0.0.1"
+edition = "2024"
+rust-version = "1.85"
+description = "Create and edit .docx files — a python-docx for Rust, built on a lossless XML tree for full round-trip fidelity"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/jwmurray/docxml"
+documentation = "https://docs.rs/docxml"
+readme = "README.md"
+keywords = ["docx", "word", "ooxml", "python-docx", "document"]
+categories = ["parser-implementations", "text-processing"]
+
+[dependencies]
