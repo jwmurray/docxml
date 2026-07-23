@@ -1,13 +1,18 @@
 //! Create and edit `.docx` files — a [python-docx](https://python-docx.readthedocs.io/)
 //! for Rust.
 //!
-//! **Status: early development.** This release reserves the crate name; the API is not
-//! yet implemented. See the [repository](https://github.com/jwmurray/docxml) for the
-//! architecture and roadmap.
+//! **Status: early development.** The OPC packaging layer is implemented; the typed
+//! document API is not yet. See the [repository](https://github.com/jwmurray/docxml)
+//! for the architecture and roadmap.
 //!
-//! `docxml` is built on a lossless, mutable XML tree: everything it doesn't understand
-//! in a document passes through untouched on save, so editing existing documents and
+//! `docxml` is built on a lossless core: every part of a package is preserved
+//! byte-for-byte unless explicitly modified, so editing existing documents and
 //! templates is safe. A typed handle API (`Document`, `Paragraph`, `Run`, `Table`)
-//! layers ergonomics on top.
+//! will layer ergonomics on top.
 
 #![forbid(unsafe_code)]
+
+mod error;
+pub mod opc;
+
+pub use error::{Error, Result};
