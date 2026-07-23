@@ -41,7 +41,7 @@ doc.save("contract-signed.docx")?;
 
 ## Roadmap
 
-- [ ] OPC packaging layer (zip, `[Content_Types].xml`, relationships)
+- [x] OPC packaging layer (zip, relationships, byte-for-byte round-trip test)
 - [ ] Lossless mutable XML tree with semantic round-trip tests against real-world documents
 - [ ] Paragraphs, runs, character/paragraph formatting
 - [ ] Tables, sections, headers/footers
