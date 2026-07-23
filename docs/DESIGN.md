@@ -86,6 +86,24 @@ p.add_run(&mut doc, "John Murray").bold(&mut doc, true);
 doc.save("contract-signed.docx")?;
 ```
 
+## Concurrency
+
+**Synchronous core; no async runtime; parallelism belongs to the caller.**
+
+- **No tokio.** The workload is CPU + local file I/O; async buys nothing, and forcing
+  a runtime on every consumer is an adoption killer. Format crates (`zip`, `calamine`,
+  `lopdf`) are conventionally sync; async callers wrap operations in `spawn_blocking`.
+  An optional `tokio` feature for async open/save may land later if demand shows —
+  the core API stays sync regardless.
+- **No rayon in the core.** Documents are small and parts parse lazily; single-threaded
+  quick-xml handles a multi-MB document in low milliseconds. There is nothing worth
+  parallelizing inside one document.
+- **The real win is across documents** (batch-process hundreds of files), and that is
+  the caller's job. The contract that enables it: `Package`, `Document`, and the tree
+  types are `Send` — guaranteed by the arena design (`Vec<Node>` + `NodeId`, no
+  `Rc`/`RefCell`). A `static_assertions`-style compile-time `Send` check accompanies
+  the tree layer when it lands.
+
 ## Dependencies
 
 Kept deliberately minimal: `zip`, `quick-xml`, `thiserror`. Dev: `tempfile`.
