@@ -25,18 +25,36 @@
 //! ```
 
 mod document;
+mod header;
 mod paragraph;
 mod run;
+mod section;
 mod table;
 mod units;
 
 pub use document::Document;
+pub use header::HeaderFooter;
 pub use paragraph::Paragraph;
 pub use run::Run;
+pub use section::Section;
 pub use table::{Cell, Row, Table, VMerge};
-pub use units::{Alignment, Pt, RgbColor};
+pub use units::{Alignment, Length, Pt, RgbColor};
 
 use crate::xml::{NodeId, XmlTree};
+
+/// Index of a parsed part in a [`Document`]'s `parsed` vector.
+///
+/// Index `0` is always the main document part (parsed eagerly on open/new). Header and
+/// footer parts are parsed lazily on first access and appended, each taking the next id.
+/// Every handle ([`Paragraph`], [`Run`], [`Table`], [`Row`], [`Cell`]) carries the
+/// `PartId` of the part it lives in, so reads and mutations route to the right tree.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) struct PartId(pub(crate) u16);
+
+impl PartId {
+    /// The main document part — always parsed, always index `0`.
+    pub(crate) const MAIN: PartId = PartId(0);
+}
 
 /// The two WordprocessingML main namespace URIs: transitional (the one Word writes)
 /// and strict (ISO/IEC 29500 strict).

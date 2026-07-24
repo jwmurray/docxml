@@ -17,26 +17,30 @@
 
 use crate::xml::{NodeId, XmlTree};
 
-use super::{Document, Paragraph, is_wml_element};
+use super::{Document, Paragraph, PartId, is_wml_element};
 
 /// A lightweight handle to a `w:tbl` table.
 ///
-/// `Table` is `Copy` and borrows nothing — just an arena node id with phantom typing.
-/// Pass a [`Document`] back to it (`&Document` to read, `&mut Document` to edit).
+/// `Table` is `Copy` and borrows nothing — just an arena node id (plus its part id) with
+/// phantom typing. Pass a [`Document`] back to it (`&Document` to read, `&mut Document` to
+/// edit).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Table {
+    part: PartId,
     node: NodeId,
 }
 
 /// A lightweight handle to a `w:tr` table row.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Row {
+    part: PartId,
     node: NodeId,
 }
 
 /// A lightweight handle to a `w:tc` table cell.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Cell {
+    part: PartId,
     node: NodeId,
 }
 
@@ -55,9 +59,9 @@ pub enum VMerge {
 }
 
 impl Table {
-    /// Wrap a known-`w:tbl` node id.
-    pub(crate) fn from_node(node: NodeId) -> Self {
-        Table { node }
+    /// Wrap a known-`w:tbl` node id living in `part`.
+    pub(crate) fn from_node(part: PartId, node: NodeId) -> Self {
+        Table { part, node }
     }
 
     /// The table's underlying tree node id.
@@ -67,12 +71,12 @@ impl Table {
 
     /// The table's rows, in order (its direct `w:tr` children).
     pub fn rows(&self, doc: &Document) -> Vec<Row> {
-        let tree = doc.tree();
+        let tree = doc.tree(self.part);
         tree.children(self.node)
             .iter()
             .copied()
             .filter(|&c| is_wml_element(tree, c, "tr"))
-            .map(Row::from_node)
+            .map(|c| Row::from_node(self.part, c))
             .collect()
     }
 
@@ -99,22 +103,22 @@ impl Table {
     /// table's `w:tblGrid`), matching python-docx's `Table.add_row`. Each cell is a
     /// `w:tc` with a minimal `w:tcPr` (auto width) and one empty `w:p`.
     pub fn add_row(&self, doc: &mut Document) -> Row {
-        let cols = self.grid_col_count(doc.tree());
-        let tr_name = doc.qn("tr");
-        let tr = doc.tree_mut().create_element(tr_name);
+        let cols = self.grid_col_count(doc.tree(self.part));
+        let tr_name = doc.qn(self.part, "tr");
+        let tr = doc.tree_mut(self.part).create_element(tr_name);
         for _ in 0..cols {
-            let tc = build_cell(doc);
-            doc.tree_mut().append_child(tr, tc);
+            let tc = build_cell(doc, self.part);
+            doc.tree_mut(self.part).append_child(tr, tc);
         }
-        doc.tree_mut().append_child(self.node, tr);
-        Row::from_node(tr)
+        doc.tree_mut(self.part).append_child(self.node, tr);
+        Row::from_node(self.part, tr)
     }
 }
 
 impl Row {
-    /// Wrap a known-`w:tr` node id.
-    pub(crate) fn from_node(node: NodeId) -> Self {
-        Row { node }
+    /// Wrap a known-`w:tr` node id living in `part`.
+    pub(crate) fn from_node(part: PartId, node: NodeId) -> Self {
+        Row { part, node }
     }
 
     /// The row's underlying tree node id.
@@ -128,20 +132,20 @@ impl Row {
     /// grid column; see the [module docs](self) for how this differs from python-docx's
     /// grid-based cells.
     pub fn cells(&self, doc: &Document) -> Vec<Cell> {
-        let tree = doc.tree();
+        let tree = doc.tree(self.part);
         tree.children(self.node)
             .iter()
             .copied()
             .filter(|&c| is_wml_element(tree, c, "tc"))
-            .map(Cell::from_node)
+            .map(|c| Cell::from_node(self.part, c))
             .collect()
     }
 }
 
 impl Cell {
-    /// Wrap a known-`w:tc` node id.
-    pub(crate) fn from_node(node: NodeId) -> Self {
-        Cell { node }
+    /// Wrap a known-`w:tc` node id living in `part`.
+    pub(crate) fn from_node(part: PartId, node: NodeId) -> Self {
+        Cell { part, node }
     }
 
     /// The cell's underlying tree node id.
@@ -154,12 +158,12 @@ impl Cell {
     /// Paragraphs inside a nested table are not included (they belong to that table's
     /// cells), matching python-docx's `_Cell.paragraphs`.
     pub fn paragraphs(&self, doc: &Document) -> Vec<Paragraph> {
-        let tree = doc.tree();
+        let tree = doc.tree(self.part);
         tree.children(self.node)
             .iter()
             .copied()
             .filter(|&c| is_wml_element(tree, c, "p"))
-            .map(Paragraph::from_node)
+            .map(|c| Paragraph::from_node(self.part, c))
             .collect()
     }
 
@@ -180,10 +184,10 @@ impl Cell {
     /// run carrying it is added. Reuses the [`Paragraph`] handle, so all of its
     /// formatting methods apply.
     pub fn add_paragraph(&self, doc: &mut Document, text: &str) -> Paragraph {
-        let name = doc.qn("p");
-        let p = doc.tree_mut().create_element(name);
-        doc.tree_mut().append_child(self.node, p);
-        let para = Paragraph::from_node(p);
+        let name = doc.qn(self.part, "p");
+        let p = doc.tree_mut(self.part).create_element(name);
+        doc.tree_mut(self.part).append_child(self.node, p);
+        let para = Paragraph::from_node(self.part, p);
         if !text.is_empty() {
             para.add_run(doc, text);
         }
@@ -200,7 +204,7 @@ impl Cell {
     pub fn set_text(&self, doc: &mut Document, text: &str) {
         // Remove every child except the properties element.
         let to_remove: Vec<NodeId> = {
-            let tree = doc.tree();
+            let tree = doc.tree(self.part);
             tree.children(self.node)
                 .iter()
                 .copied()
@@ -208,7 +212,7 @@ impl Cell {
                 .collect()
         };
         for child in to_remove {
-            doc.tree_mut().remove_from_parent(child);
+            doc.tree_mut(self.part).remove_from_parent(child);
         }
         self.add_paragraph(doc, text);
     }
@@ -218,11 +222,11 @@ impl Cell {
     /// A value of `2` or more means this physical cell was horizontally merged across that
     /// many grid columns. An absent or unparsable `w:gridSpan` reads as `1`.
     pub fn grid_span(&self, doc: &Document) -> u32 {
-        let tree = doc.tree();
+        let tree = doc.tree(self.part);
         let Some(gs) = self.tc_pr_child(tree, "gridSpan") else {
             return 1;
         };
-        match tree.attr(gs, &doc.qn("val")) {
+        match tree.attr(gs, &doc.qn(self.part, "val")) {
             Some(v) => v.trim().parse().unwrap_or(1),
             None => 1,
         }
@@ -233,9 +237,9 @@ impl Cell {
     /// `w:val="restart"` → [`VMerge::Restart`]; a bare `w:vMerge` or `w:val="continue"` →
     /// [`VMerge::Continue`].
     pub fn v_merge(&self, doc: &Document) -> Option<VMerge> {
-        let tree = doc.tree();
+        let tree = doc.tree(self.part);
         let vmerge = self.tc_pr_child(tree, "vMerge")?;
-        match tree.attr(vmerge, &doc.qn("val")) {
+        match tree.attr(vmerge, &doc.qn(self.part, "val")) {
             Some("restart") => Some(VMerge::Restart),
             _ => Some(VMerge::Continue),
         }
@@ -259,17 +263,17 @@ impl Cell {
     }
 }
 
-/// Build a detached empty `w:tc`: a `w:tcPr` (with `w:tcW w:w="0" w:type="auto"`) followed
-/// by one empty `w:p`, in schema order (`w:tcPr` first).
-fn build_cell(doc: &mut Document) -> NodeId {
-    let tc_name = doc.qn("tc");
-    let tcpr_name = doc.qn("tcPr");
-    let tcw_name = doc.qn("tcW");
-    let p_name = doc.qn("p");
-    let w_attr = doc.qn("w");
-    let type_attr = doc.qn("type");
+/// Build a detached empty `w:tc` in `part`: a `w:tcPr` (with `w:tcW w:w="0" w:type="auto"`)
+/// followed by one empty `w:p`, in schema order (`w:tcPr` first).
+fn build_cell(doc: &mut Document, part: PartId) -> NodeId {
+    let tc_name = doc.qn(part, "tc");
+    let tcpr_name = doc.qn(part, "tcPr");
+    let tcw_name = doc.qn(part, "tcW");
+    let p_name = doc.qn(part, "p");
+    let w_attr = doc.qn(part, "w");
+    let type_attr = doc.qn(part, "type");
 
-    let tree = doc.tree_mut();
+    let tree = doc.tree_mut(part);
     let tc = tree.create_element(tc_name);
     let tcpr = tree.create_element(tcpr_name);
     let tcw = tree.create_element(tcw_name);
@@ -288,29 +292,29 @@ fn build_cell(doc: &mut Document) -> NodeId {
 /// `w:tblGrid` of `cols` bare `w:gridCol`, then `rows` `w:tr`, each with `cols` cells from
 /// [`build_cell`]. This mirrors the skeleton python-docx's `Document.add_table` writes,
 /// minus the table style (python-docx's `add_table` applies no style when none is passed).
-pub(super) fn build_table(doc: &mut Document, rows: usize, cols: usize) -> NodeId {
-    let tbl_name = doc.qn("tbl");
-    let tblpr_name = doc.qn("tblPr");
-    let tblw_name = doc.qn("tblW");
-    let tbllook_name = doc.qn("tblLook");
-    let tblgrid_name = doc.qn("tblGrid");
-    let gridcol_name = doc.qn("gridCol");
-    let tr_name = doc.qn("tr");
-    let type_attr = doc.qn("type");
-    let w_attr = doc.qn("w");
+pub(super) fn build_table(doc: &mut Document, part: PartId, rows: usize, cols: usize) -> NodeId {
+    let tbl_name = doc.qn(part, "tbl");
+    let tblpr_name = doc.qn(part, "tblPr");
+    let tblw_name = doc.qn(part, "tblW");
+    let tbllook_name = doc.qn(part, "tblLook");
+    let tblgrid_name = doc.qn(part, "tblGrid");
+    let gridcol_name = doc.qn(part, "gridCol");
+    let tr_name = doc.qn(part, "tr");
+    let type_attr = doc.qn(part, "type");
+    let w_attr = doc.qn(part, "w");
     // w:tblLook attribute names, all in the WML (`w:`) prefix.
     let look_attrs: [(String, &str); 7] = [
-        (doc.qn("val"), "04A0"),
-        (doc.qn("firstRow"), "1"),
-        (doc.qn("lastRow"), "0"),
-        (doc.qn("firstColumn"), "1"),
-        (doc.qn("lastColumn"), "0"),
-        (doc.qn("noHBand"), "0"),
-        (doc.qn("noVBand"), "1"),
+        (doc.qn(part, "val"), "04A0"),
+        (doc.qn(part, "firstRow"), "1"),
+        (doc.qn(part, "lastRow"), "0"),
+        (doc.qn(part, "firstColumn"), "1"),
+        (doc.qn(part, "lastColumn"), "0"),
+        (doc.qn(part, "noHBand"), "0"),
+        (doc.qn(part, "noVBand"), "1"),
     ];
 
     // w:tblPr with w:tblW (auto) and a conventional w:tblLook.
-    let tree = doc.tree_mut();
+    let tree = doc.tree_mut(part);
     let tblpr = tree.create_element(tblpr_name);
     let tblw = tree.create_element(tblw_name);
     tree.set_attr(tblw, type_attr, "auto");
@@ -334,12 +338,12 @@ pub(super) fn build_table(doc: &mut Document, rows: usize, cols: usize) -> NodeI
     tree.append_child(tbl, tblgrid);
 
     for _ in 0..rows {
-        let tr = doc.tree_mut().create_element(tr_name.clone());
+        let tr = doc.tree_mut(part).create_element(tr_name.clone());
         for _ in 0..cols {
-            let tc = build_cell(doc);
-            doc.tree_mut().append_child(tr, tc);
+            let tc = build_cell(doc, part);
+            doc.tree_mut(part).append_child(tr, tc);
         }
-        doc.tree_mut().append_child(tbl, tr);
+        doc.tree_mut(part).append_child(tbl, tr);
     }
     tbl
 }

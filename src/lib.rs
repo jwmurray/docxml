@@ -3,10 +3,12 @@
 //!
 //! **Status: early development.** The OPC packaging layer, the lossless XML tree, a
 //! typed document API ([`Document`], [`Paragraph`], [`Run`]), character/paragraph
-//! formatting (bold, italic, underline, size, color, font, alignment, styles), and
-//! tables ([`Table`], [`Row`], [`Cell`] — read rows/cells/text, merge awareness, create,
-//! and edit) are implemented. See the [repository](https://github.com/jwmurray/docxml)
-//! for the architecture and roadmap.
+//! formatting (bold, italic, underline, size, color, font, alignment, styles), tables
+//! ([`Table`], [`Row`], [`Cell`] — read rows/cells/text, merge awareness, create, and
+//! edit), and sections with headers/footers ([`Section`], [`HeaderFooter`], [`Length`] —
+//! page geometry read/set, and header/footer text read and edit via lazily parsed parts)
+//! are implemented. See the [repository](https://github.com/jwmurray/docxml) for the
+//! architecture and roadmap.
 //!
 //! `docxml` is built on a lossless core: every part of a package is preserved
 //! byte-for-byte unless explicitly modified, so editing existing documents and
@@ -32,5 +34,8 @@ mod error;
 pub mod opc;
 pub mod xml;
 
-pub use api::{Alignment, Cell, Document, Paragraph, Pt, RgbColor, Row, Run, Table, VMerge};
+pub use api::{
+    Alignment, Cell, Document, HeaderFooter, Length, Paragraph, Pt, RgbColor, Row, Run, Section,
+    Table, VMerge,
+};
 pub use error::{Error, Result};
