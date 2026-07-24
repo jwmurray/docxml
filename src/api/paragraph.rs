@@ -51,6 +51,11 @@ const PPR_ORDER: &[&str] = &[
     "pPrChange",
 ];
 
+/// Canonical `w:numPr` child order (ECMA-376 §17.9.24, `CT_NumPr` sequence), local names
+/// only: `w:ilvl` (the level) precedes `w:numId` (the numbering reference), which precede
+/// the rarely written revision children. New children are inserted to keep this order.
+const NUMPR_ORDER: &[&str] = &["ilvl", "numId", "numberingChange", "ins"];
+
 /// A lightweight handle to a `w:p` paragraph.
 ///
 /// `Paragraph` is `Copy` and borrows nothing — it is just an arena node id (plus the id of
@@ -183,6 +188,84 @@ impl Paragraph {
         let pstyle = self.ensure_ppr_child(doc, "pStyle");
         doc.tree_mut(self.part).set_attr(pstyle, val, style_id);
         *self
+    }
+
+    /// The paragraph's list numbering as `(numId, ilvl)`, or `None` when it is not part of
+    /// a list.
+    ///
+    /// A direct `w:pPr/w:numPr` is read first: its `w:numId/@w:val` is the numbering id and
+    /// `w:ilvl/@w:val` the indent level, defaulting to `0` when `w:ilvl` is absent. When the
+    /// paragraph carries no direct `w:numPr`, the numbering contributed by its paragraph
+    /// *style* is resolved through `styles.xml` (following the `w:basedOn` chain) — this is
+    /// how a "List Bullet" / "List Number" paragraph, whose `w:numPr` lives on the style
+    /// rather than the paragraph, still reports its numbering, matching how Word renders it.
+    /// Returns `None` when neither the paragraph nor its style chain defines a `w:numId`.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use docxml::Document;
+    ///
+    /// let mut doc = Document::new();
+    /// let num = doc.create_numbering(docxml::NumberFormat::Decimal);
+    /// let p = doc.add_paragraph("item");
+    /// p.set_numbering(&mut doc, num, 0);
+    /// assert_eq!(p.numbering(&doc), Some((num, 0)));
+    /// ```
+    pub fn numbering(&self, doc: &Document) -> Option<(u32, u32)> {
+        let tree = doc.tree(self.part);
+        let val = doc.qn(self.part, "val");
+        if let Some(numpr) = self.ppr_child(tree, "numPr") {
+            if let Some(pair) = read_numpr(tree, numpr, &val) {
+                return Some(pair);
+            }
+        }
+        // Fallback: numbering defined on the paragraph style (and its basedOn chain).
+        let style_id = self.style_id(doc)?;
+        doc.style_numbering(&style_id)
+    }
+
+    /// Apply direct list numbering to the paragraph (`w:pPr/w:numPr`).
+    ///
+    /// Writes `w:ilvl` (the level) then `w:numId` (the numbering reference) — the
+    /// `CT_NumPr` child order — creating each if absent, with the `w:numPr` itself placed in
+    /// `w:pPr` per the canonical property order. `num_id` is a numbering id defined in
+    /// `word/numbering.xml` (see [`Document::create_numbering`]); `level` is the zero-based
+    /// list level. Any existing `w:numId` / `w:ilvl` values are overwritten.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use docxml::Document;
+    ///
+    /// let mut doc = Document::new();
+    /// let num = doc.create_numbering(docxml::NumberFormat::Bullet);
+    /// let p = doc.add_paragraph("bullet");
+    /// p.set_numbering(&mut doc, num, 0);
+    /// assert_eq!(p.numbering(&doc), Some((num, 0)));
+    /// ```
+    pub fn set_numbering(&self, doc: &mut Document, num_id: u32, level: u32) -> Paragraph {
+        let val = doc.qn(self.part, "val");
+        let numpr = self.ensure_ppr_child(doc, "numPr");
+        // w:ilvl precedes w:numId in CT_NumPr; create ilvl first so numId slots after it.
+        let ilvl = self.ensure_numpr_child(doc, numpr, "ilvl");
+        doc.tree_mut(self.part)
+            .set_attr(ilvl, val.clone(), level.to_string());
+        let numid = self.ensure_numpr_child(doc, numpr, "numId");
+        doc.tree_mut(self.part)
+            .set_attr(numid, val, num_id.to_string());
+        *self
+    }
+
+    /// Remove the paragraph's direct list numbering, deleting `w:pPr/w:numPr`.
+    ///
+    /// Only a direct `w:numPr` is removed; numbering contributed by the paragraph's style is
+    /// untouched (clear that by changing the style). After this,
+    /// [`numbering`](Self::numbering) falls back to the style, or returns `None`.
+    pub fn clear_numbering(&self, doc: &mut Document) {
+        if let Some(numpr) = self.ppr_child(doc.tree(self.part), "numPr") {
+            doc.tree_mut(self.part).remove_from_parent(numpr);
+        }
     }
 
     /// The paragraph's line spacing (`w:pPr/w:spacing`), if set.
@@ -519,6 +602,30 @@ impl Paragraph {
         ppr
     }
 
+    /// A direct `w:numPr` child with the given local name, creating it in `CT_NumPr` order
+    /// (`w:ilvl` before `w:numId`) if absent.
+    fn ensure_numpr_child(&self, doc: &mut Document, numpr: NodeId, local: &str) -> NodeId {
+        if let Some(existing) = {
+            let tree = doc.tree(self.part);
+            tree.children(numpr)
+                .iter()
+                .copied()
+                .find(|&c| is_wml_element(tree, c, local))
+        } {
+            return existing;
+        }
+        let name = doc.qn(self.part, local);
+        let index = ordered_insert_index(
+            doc.tree(self.part),
+            numpr,
+            rank_in(NUMPR_ORDER, local),
+            NUMPR_ORDER,
+        );
+        let el = doc.tree_mut(self.part).create_element(name);
+        doc.tree_mut(self.part).insert_child(numpr, index, el);
+        el
+    }
+
     /// A direct `w:pPr` child with the given WML local name, if present.
     fn ppr_child(&self, tree: &XmlTree, local: &str) -> Option<NodeId> {
         let ppr = self.ppr(tree)?;
@@ -552,6 +659,28 @@ impl Paragraph {
         doc.tree_mut(self.part).insert_child(ppr, index, el);
         el
     }
+}
+
+/// Read `(numId, ilvl)` out of a `w:numPr` element (`val_name` is the part's `w:val`
+/// qualified attribute name). `None` when no parsable `w:numId` child is present; `w:ilvl`
+/// defaults to `0` when absent or unparsable.
+pub(super) fn read_numpr(tree: &XmlTree, numpr: NodeId, val_name: &str) -> Option<(u32, u32)> {
+    let numid = tree
+        .children(numpr)
+        .iter()
+        .copied()
+        .find(|&c| is_wml_element(tree, c, "numId"))
+        .and_then(|c| tree.attr(c, val_name))
+        .and_then(|v| v.trim().parse::<u32>().ok())?;
+    let ilvl = tree
+        .children(numpr)
+        .iter()
+        .copied()
+        .find(|&c| is_wml_element(tree, c, "ilvl"))
+        .and_then(|c| tree.attr(c, val_name))
+        .and_then(|v| v.trim().parse::<u32>().ok())
+        .unwrap_or(0);
+    Some((numid, ilvl))
 }
 
 /// Append a run's text (python-docx semantics) to `out`: `w:t` text verbatim, `w:tab`

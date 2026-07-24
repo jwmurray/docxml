@@ -57,7 +57,7 @@ doc.save("contract-signed.docx")?;
 - [x] Sections, headers/footers (page geometry read/set via `Length`; header/footer text read + edit through lazily parsed parts)
 - [x] Images (inline pictures — read, add with EMU geometry, media part + content-type + relationship)
 - [x] Paragraph formatting (line spacing, space before/after, indents, tab stops, keep/page-break-before), breaks, field codes (PAGE/TOC)
-- [ ] Numbering / lists (numbering.xml authoring; List Bullet / List Number)
+- [x] Numbering / lists (numbering.xml authoring; List Bullet / List Number, `create_numbering`, restartable lists)
 - [ ] Header/footer part creation; first/even-page headers
 - [ ] Table column widths, merge creation, grid-based cell addressing
 - [ ] Hyperlinks (write API with relationship creation)

@@ -109,6 +109,21 @@ impl Package {
         }
     }
 
+    /// Remove a part by name (leading slashes ignored, per OPC part-name form),
+    /// returning `true` when a part was removed.
+    ///
+    /// Removing a part does not touch the relationships or content-type declarations that
+    /// referenced it — the caller is responsible for keeping those consistent (a stray
+    /// relationship to a missing part is tolerated by consumers, but a stale content-type
+    /// `Override` is not always). Used by callers that strip a derived part before
+    /// regenerating it.
+    pub fn remove_part(&mut self, name: &str) -> bool {
+        let name = name.trim_start_matches('/');
+        let before = self.parts.len();
+        self.parts.retain(|p| p.name != name);
+        self.parts.len() != before
+    }
+
     /// Look up a part by name (leading slashes ignored, per OPC part-name form).
     pub fn part(&self, name: &str) -> Option<&Part> {
         let name = name.trim_start_matches('/');
