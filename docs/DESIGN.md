@@ -120,14 +120,14 @@ Kept deliberately minimal: `zip`, `quick-xml`, `thiserror`. Dev: `tempfile`.
 
 ## Milestones
 
-1. ~~OPC packaging layer + byte-level round-trip test~~ (PR #1)
-2. Lossless XML tree + semantic round-trip tests against real-world fixtures
-3. `Document` / `Paragraph` / `Run` + text read/edit; embedded blank template (create)
-4. Character/paragraph formatting (bold, italic, size, color, alignment, styles read)
-5. Tables
-6. Sections, headers/footers
-7. Images (inline pictures, EMU geometry)
-8. Styles authoring, numbering — post-1.0 candidates
+1. [x] OPC packaging layer + byte-level round-trip test (PR #1)
+2. [x] Lossless XML tree + semantic round-trip tests against real-world fixtures (PR #4)
+3. [ ] `Document` / `Paragraph` / `Run` + text read/edit; embedded blank template (create)
+4. [ ] Character/paragraph formatting (bold, italic, size, color, alignment, styles read)
+5. [ ] Tables
+6. [ ] Sections, headers/footers
+7. [ ] Images (inline pictures, EMU geometry)
+8. [ ] Styles authoring, numbering — post-1.0 candidates
 
 Versioning: 0.x during the milestone sequence; API may break between minors until 1.0.
 

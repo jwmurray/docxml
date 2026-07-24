@@ -12,6 +12,9 @@ pub enum Error {
 
     #[error("not a valid OPC package: {0}")]
     InvalidPackage(String),
+
+    #[error("malformed XML: {0}")]
+    Malformed(String),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
