@@ -27,6 +27,7 @@
 mod document;
 mod header;
 mod paragraph;
+mod picture;
 mod run;
 mod section;
 mod table;
@@ -35,6 +36,7 @@ mod units;
 pub use document::Document;
 pub use header::HeaderFooter;
 pub use paragraph::Paragraph;
+pub use picture::Picture;
 pub use run::Run;
 pub use section::Section;
 pub use table::{Cell, Row, Table, VMerge};
@@ -79,6 +81,17 @@ fn split_qname(qname: &str) -> (Option<&str>, &str) {
 /// than matched literally, so both `w:`-prefixed and default-namespace documents, in
 /// either the transitional or strict namespace, are handled.
 fn is_wml_element(tree: &XmlTree, id: NodeId, local: &str) -> bool {
+    is_element_in(tree, id, &WML_MAIN_URIS, local)
+}
+
+/// True when `id` is an element whose local name is `local` and whose resolved namespace
+/// URI is one of `uris`.
+///
+/// Generalizes [`is_wml_element`] to any namespace: the element's prefix is resolved to a
+/// URI through [`XmlTree::namespace_uri`] rather than matched literally, so DrawingML,
+/// content-types, and relationships elements match regardless of the prefix a given
+/// document happens to use (transitional or strict URI).
+fn is_element_in(tree: &XmlTree, id: NodeId, uris: &[&str], local: &str) -> bool {
     let Some(name) = tree.name(id) else {
         return false;
     };
@@ -87,7 +100,7 @@ fn is_wml_element(tree: &XmlTree, id: NodeId, local: &str) -> bool {
         return false;
     }
     match tree.namespace_uri(id, prefix) {
-        Some(uri) => WML_MAIN_URIS.contains(&uri),
+        Some(uri) => uris.contains(&uri),
         None => false,
     }
 }

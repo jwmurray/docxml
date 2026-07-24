@@ -126,7 +126,7 @@ Kept deliberately minimal: `zip`, `quick-xml`, `thiserror`. Dev: `tempfile`.
 4. [x] Character/paragraph formatting (bold, italic, size, color, alignment, styles read) (PR #7)
 5. [x] Tables (PR #8)
 6. [x] Sections, headers/footers (PR #9)
-7. [ ] Images (inline pictures, EMU geometry)
+7. [x] Images (inline pictures, EMU geometry) (PR #10)
 8. [ ] Styles authoring, numbering — post-1.0 candidates
 
 Versioning: 0.x during the milestone sequence; API may break between minors until 1.0.
