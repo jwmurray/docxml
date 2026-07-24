@@ -142,12 +142,71 @@ impl Section {
         *self
     }
 
+    /// Whether this section has a distinct first-page header/footer (`w:sectPr/w:titlePg`).
+    ///
+    /// `w:titlePg` is an on/off property (`CT_OnOff`, like `w:keepNext`): present and not
+    /// explicitly `w:val="0"`/`"false"` means on. When set, Word uses the `"first"`-type
+    /// header/footer references on the section's first page instead of the `"default"` ones.
+    /// A header of type [`First`](crate::HeaderFooterType::First) is not shown unless this is
+    /// also set — see [`create_header`](Self::create_header).
+    pub fn different_first_page(&self, doc: &Document) -> bool {
+        self.sect_toggle(doc, "titlePg")
+    }
+
+    /// Set whether this section has a distinct first-page header/footer
+    /// (`w:sectPr/w:titlePg`). `w:titlePg` sits in `CT_SectPr` order (ECMA-376 §17.6.17,
+    /// present in [`SECTPR_ORDER`]); on ensures a bare element, off removes it.
+    pub fn set_different_first_page(&self, doc: &mut Document, on: bool) -> Section {
+        self.set_sect_toggle(doc, "titlePg", on);
+        *self
+    }
+
     /// A direct `w:sectPr` child with the given WML local name, if present.
     pub(crate) fn sect_child(&self, tree: &XmlTree, local: &str) -> Option<NodeId> {
         tree.children(self.node)
             .iter()
             .copied()
             .find(|&c| is_wml_element(tree, c, local))
+    }
+
+    /// The index within this `w:sectPr` at which a new child named `local` should be
+    /// inserted to keep the children in `CT_SectPr` schema order.
+    ///
+    /// Unlike [`ensure_sect_child`](Self::ensure_sect_child), this never reuses an existing
+    /// child — header/footer references repeat (one per `w:type`), so their creation always
+    /// inserts a fresh element. Used by header/footer reference creation in `header.rs`.
+    pub(crate) fn sect_insert_index(&self, tree: &XmlTree, local: &str) -> usize {
+        ordered_insert_index(tree, self.node, rank_in(SECTPR_ORDER, local), SECTPR_ORDER)
+    }
+
+    /// Read an on/off `w:sectPr` toggle child (`w:titlePg`, …): present and not
+    /// `w:val="0"/"false"` is on. Mirrors [`Paragraph`](crate::Paragraph)'s `w:pPr` toggles.
+    fn sect_toggle(&self, doc: &Document, local: &str) -> bool {
+        let tree = doc.tree(self.part);
+        let Some(el) = self.sect_child(tree, local) else {
+            return false;
+        };
+        match tree.attr(el, &doc.qn(self.part, "val")) {
+            Some(v) => !matches!(v, "0" | "false"),
+            None => true,
+        }
+    }
+
+    /// Set or clear an on/off `w:sectPr` toggle child. On ensures a bare element (clearing an
+    /// explicit `w:val="0"/"false"`); off removes it.
+    fn set_sect_toggle(&self, doc: &mut Document, local: &str, on: bool) {
+        if on {
+            let el = self.ensure_sect_child(doc, local);
+            let val = doc.qn(self.part, "val");
+            let tree = doc.tree_mut(self.part);
+            if let Some(v) = tree.attr(el, &val) {
+                if matches!(v, "0" | "false") {
+                    tree.remove_attr(el, &val);
+                }
+            }
+        } else if let Some(el) = self.sect_child(doc.tree(self.part), local) {
+            doc.tree_mut(self.part).remove_from_parent(el);
+        }
     }
 
     /// Read a twips-valued attribute `attr_local` of the direct `w:sectPr` child element

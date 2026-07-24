@@ -5,7 +5,7 @@ use std::io::{Cursor, Read, Seek, Write};
 use std::path::Path;
 
 use crate::error::{Error, Result};
-use crate::opc::{Package, parse_relationships};
+use crate::opc::{Package, Relationship, parse_relationships};
 use crate::xml::XmlTree;
 
 use super::table::build_table;
@@ -263,11 +263,45 @@ impl Document {
     /// (package-absolute) into a plain package part name. Returns `None` when the rels
     /// part is missing/unparsable or no relationship has that id.
     pub(crate) fn resolve_rel_target(&self, source_part: &str, r_id: &str) -> Option<String> {
-        let rels_name = rels_part_name(source_part);
-        let rels_part = self.package.part(&rels_name)?;
-        let rels = parse_relationships(&rels_part.data).ok()?;
+        let rels = self.relationships_of(source_part)?;
         let rel = rels.iter().find(|r| r.id == r_id)?;
         Some(resolve_part_path(source_part, &rel.target))
+    }
+
+    /// The relationships declared by `source_part`, preferring the in-memory parsed tree
+    /// over the raw package bytes.
+    ///
+    /// When a relationships part has been parsed (and possibly mutated — e.g. by
+    /// [`add_relationship`](Self::add_relationship)), its live tree is the source of truth;
+    /// the package bytes are only refreshed on save. Reading straight from the package would
+    /// miss a relationship added earlier in the same session — which
+    /// [`resolve_rel_target`](Self::resolve_rel_target) needs, so that a header created and
+    /// then re-resolved in one session resolves to the part just made. Falls back to parsing
+    /// the package bytes when the rels part has not been parsed. Returns `None` when there is
+    /// no rels part or it does not parse.
+    fn relationships_of(&self, source_part: &str) -> Option<Vec<Relationship>> {
+        let rels_name = rels_part_name(source_part);
+        if let Some(parsed) = self.parsed.iter().find(|p| p.part_name == rels_name) {
+            let tree = &parsed.tree;
+            let root = tree.root();
+            let rels = tree
+                .children(root)
+                .iter()
+                .copied()
+                .filter(|&c| matches!(tree.name(c), Some(n) if split_qname(n).1 == "Relationship"))
+                .filter_map(|c| {
+                    Some(Relationship {
+                        id: tree.attr(c, "Id")?.to_string(),
+                        rel_type: tree.attr(c, "Type")?.to_string(),
+                        target: tree.attr(c, "Target")?.to_string(),
+                        external: tree.attr(c, "TargetMode") == Some("External"),
+                    })
+                })
+                .collect();
+            return Some(rels);
+        }
+        let rels_part = self.package.part(&rels_name)?;
+        parse_relationships(&rels_part.data).ok()
     }
 
     /// Add (or replace) a raw package part. A thin wrapper over
@@ -376,13 +410,12 @@ impl Document {
     /// relationship of one of `rel_types`, or `None` when there is no such relationship (or
     /// its rels part is missing / unparsable).
     ///
-    /// Read-only: it parses the rels part's bytes directly rather than through the cached
-    /// tree machinery, so it needs only `&self`.
+    /// Read-only (`&self`): resolves through [`relationships_of`](Self::relationships_of),
+    /// so it sees a relationship added earlier this session (via the parsed rels tree) as
+    /// well as the on-disk ones.
     pub(crate) fn part_by_rel_type(&self, rel_types: &[&str]) -> Option<String> {
         let source = self.main_part_name();
-        let rels_name = rels_part_name(source);
-        let rels_part = self.package.part(&rels_name)?;
-        let rels = parse_relationships(&rels_part.data).ok()?;
+        let rels = self.relationships_of(source)?;
         let rel = rels
             .iter()
             .find(|r| rel_types.contains(&r.rel_type.as_str()))?;
