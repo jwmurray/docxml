@@ -53,7 +53,7 @@ doc.save("contract-signed.docx")?;
 - [x] `Document` / `Paragraph` / `Run` — text read/edit, bold/italic, embedded blank template (create)
 - [x] Character/paragraph formatting (underline, size, color, font, alignment, styles read)
 - [x] Tables (read rows/cells/text, merge awareness, create, `add_row`, cell `set_text`)
-- [ ] Sections, headers/footers
+- [x] Sections, headers/footers (page geometry read/set via `Length`; header/footer text read + edit through lazily parsed parts)
 - [ ] Images
 - [ ] Styles (read + pass-through first, authoring later)
 

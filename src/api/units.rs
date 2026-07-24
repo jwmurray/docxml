@@ -1,9 +1,112 @@
 //! Value types for character and paragraph formatting: [`Pt`] (font size), [`RgbColor`],
-//! and [`Alignment`].
+//! [`Alignment`], and [`Length`] (page geometry).
 //!
 //! Each type owns the conversion between its Rust form and the WordprocessingML
 //! attribute string it serializes to, so the run and paragraph accessors stay free of
 //! format trivia. The conversions match python-docx's semantics (see each type).
+
+/// English Metric Units per inch — the base of the OOXML measurement system.
+const EMU_PER_INCH: i64 = 914_400;
+/// EMU per point: `914400 / 72`.
+const EMU_PER_PT: i64 = 12_700;
+/// EMU per twip (twentieth of a point): `914400 / 1440`.
+const EMU_PER_TWIP: i64 = 635;
+/// EMU per centimetre: `914400 / 2.54`.
+const EMU_PER_CM: i64 = 360_000;
+
+/// A length, stored internally as [English Metric Units][emu] (EMU) — a signed integer
+/// count so no precision is lost between unit systems.
+///
+/// The OOXML measurement hierarchy is `1 inch = 914400 EMU = 1440 twips = 72 pt`
+/// (and `1 cm = 360000 EMU`). Construct a `Length` in whichever unit is natural and read
+/// it back in any other:
+///
+/// ```rust
+/// use docxml::Length;
+///
+/// let m = Length::from_inches(1.25);
+/// assert_eq!(m.twips(), 1800); // page-geometry attributes are in twips
+/// assert_eq!(m.emu(), 1_143_000);
+/// assert_eq!(Length::from_twips(1440), Length::from_inches(1.0));
+/// ```
+///
+/// Page-geometry XML attributes (`w:pgSz`, `w:pgMar`) are expressed in twips; the
+/// [`Section`](crate::Section) accessors read and write them through this type.
+///
+/// # Naming
+///
+/// Constructors are `from_*` and accessors are the plain unit name — the same split
+/// [`std::time::Duration`] uses (`Duration::from_secs` / `Duration::as_secs`). Rust has
+/// no name overloading, so a single type cannot expose both a `twips(i64)` constructor
+/// *and* a `twips(&self)` accessor; the `from_` prefix keeps both directions available
+/// and unambiguous.
+///
+/// [emu]: https://en.wikipedia.org/wiki/Office_Open_XML_file_formats#DrawingML
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Length(i64);
+
+impl Length {
+    /// A length of exactly `emu` English Metric Units.
+    pub const fn from_emu(emu: i64) -> Length {
+        Length(emu)
+    }
+
+    /// A length of `twips` (twentieths of a point) — the unit of page-geometry attributes.
+    pub const fn from_twips(twips: i64) -> Length {
+        Length(twips * EMU_PER_TWIP)
+    }
+
+    /// A length of `inches`.
+    pub fn from_inches(inches: f64) -> Length {
+        Length((inches * EMU_PER_INCH as f64).round() as i64)
+    }
+
+    /// A length of `points`.
+    pub fn from_pt(points: f64) -> Length {
+        Length((points * EMU_PER_PT as f64).round() as i64)
+    }
+
+    /// A length of `centimetres`.
+    pub fn from_cm(centimetres: f64) -> Length {
+        Length((centimetres * EMU_PER_CM as f64).round() as i64)
+    }
+
+    /// This length in English Metric Units (the exact stored value).
+    pub const fn emu(self) -> i64 {
+        self.0
+    }
+
+    /// This length in twips, rounded to the nearest whole twip.
+    pub fn twips(self) -> i64 {
+        (self.0 as f64 / EMU_PER_TWIP as f64).round() as i64
+    }
+
+    /// This length in inches.
+    pub fn inches(self) -> f64 {
+        self.0 as f64 / EMU_PER_INCH as f64
+    }
+
+    /// This length in points.
+    pub fn pt(self) -> f64 {
+        self.0 as f64 / EMU_PER_PT as f64
+    }
+
+    /// This length in centimetres.
+    pub fn cm(self) -> f64 {
+        self.0 as f64 / EMU_PER_CM as f64
+    }
+
+    /// Parse a twips-valued XML attribute (e.g. `w:pgSz/@w:w`) into a `Length`. Returns
+    /// `None` when the value is not an integer.
+    pub(crate) fn from_twips_str(val: &str) -> Option<Length> {
+        val.trim().parse::<i64>().ok().map(Length::from_twips)
+    }
+
+    /// This length as a twips XML-attribute string (rounded to the nearest twip).
+    pub(crate) fn to_twips_string(self) -> String {
+        self.twips().to_string()
+    }
+}
 
 /// A measurement in points, used for font size (`w:sz`).
 ///
@@ -143,5 +246,43 @@ mod tests {
         assert_eq!(Alignment::from_val("start"), Some(Alignment::Left));
         assert_eq!(Alignment::from_val("end"), Some(Alignment::Right));
         assert_eq!(Alignment::from_val("distribute"), None);
+    }
+
+    #[test]
+    fn length_unit_conversions_are_exact_at_the_hierarchy() {
+        let inch = Length::from_inches(1.0);
+        assert_eq!(inch.emu(), 914_400);
+        assert_eq!(inch.twips(), 1440);
+        assert_eq!(inch.pt(), 72.0);
+        assert_eq!(inch, Length::from_twips(1440));
+        assert_eq!(inch, Length::from_pt(72.0));
+        assert_eq!(inch, Length::from_emu(914_400));
+    }
+
+    #[test]
+    fn length_inch_and_a_quarter_is_1800_twips() {
+        let m = Length::from_inches(1.25);
+        assert_eq!(m.twips(), 1800);
+        assert_eq!(m.emu(), 1_143_000);
+    }
+
+    #[test]
+    fn length_cm_conversion() {
+        assert_eq!(Length::from_cm(2.54).emu(), 914_400);
+        assert!((Length::from_emu(360_000).cm() - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn length_twips_string_roundtrip() {
+        assert_eq!(Length::from_twips(12240).to_twips_string(), "12240");
+        assert_eq!(
+            Length::from_twips_str("1800"),
+            Some(Length::from_twips(1800))
+        );
+        assert_eq!(
+            Length::from_twips_str("  720 "),
+            Some(Length::from_twips(720))
+        );
+        assert_eq!(Length::from_twips_str("auto"), None);
     }
 }

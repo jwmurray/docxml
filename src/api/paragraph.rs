@@ -3,7 +3,8 @@
 use crate::xml::{NodeId, XmlTree};
 
 use super::{
-    Alignment, Document, Run, is_wml_element, needs_space_preserve, ordered_insert_index, rank_in,
+    Alignment, Document, PartId, Run, is_wml_element, needs_space_preserve, ordered_insert_index,
+    rank_in,
 };
 
 /// Canonical `w:pPr` child order (ECMA-376 §17.3.1.26, `CT_PPr` sequence), local names
@@ -52,18 +53,21 @@ const PPR_ORDER: &[&str] = &[
 
 /// A lightweight handle to a `w:p` paragraph.
 ///
-/// `Paragraph` is `Copy` and borrows nothing — it is just an arena node id with phantom
-/// typing. Pass a [`Document`] back to it (`&Document` to read, `&mut Document` to edit)
-/// to do anything useful.
+/// `Paragraph` is `Copy` and borrows nothing — it is just an arena node id (plus the id of
+/// the part it lives in) with phantom typing. Pass a [`Document`] back to it (`&Document`
+/// to read, `&mut Document` to edit) to do anything useful. A paragraph read from a header
+/// or footer carries that part's id, so its text and runs resolve against the header/footer
+/// tree, not the body.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Paragraph {
+    part: PartId,
     node: NodeId,
 }
 
 impl Paragraph {
-    /// Wrap a known-`w:p` node id.
-    pub(crate) fn from_node(node: NodeId) -> Self {
-        Paragraph { node }
+    /// Wrap a known-`w:p` node id living in `part`.
+    pub(crate) fn from_node(part: PartId, node: NodeId) -> Self {
+        Paragraph { part, node }
     }
 
     /// The paragraph's underlying tree node id.
@@ -88,7 +92,7 @@ impl Paragraph {
     /// assert_eq!(p.text(&doc), "Hello, world");
     /// ```
     pub fn text(&self, doc: &Document) -> String {
-        let tree = doc.tree();
+        let tree = doc.tree(self.part);
         let mut out = String::new();
         for run in self.run_nodes(tree) {
             append_run_text(tree, run, &mut out);
@@ -98,7 +102,9 @@ impl Paragraph {
 
     /// The paragraph's runs, in order.
     pub fn runs(&self, doc: &Document) -> Vec<Run> {
-        self.run_nodes(doc.tree()).map(Run::from_node).collect()
+        self.run_nodes(doc.tree(self.part))
+            .map(|r| Run::from_node(self.part, r))
+            .collect()
     }
 
     /// Append a run carrying `text`, returning a handle to it.
@@ -118,10 +124,10 @@ impl Paragraph {
     /// assert!(r.is_bold(&doc));
     /// ```
     pub fn add_run(&self, doc: &mut Document, text: &str) -> Run {
-        let r_name = doc.qn("r");
-        let t_name = doc.qn("t");
+        let r_name = doc.qn(self.part, "r");
+        let t_name = doc.qn(self.part, "t");
 
-        let tree = doc.tree_mut();
+        let tree = doc.tree_mut(self.part);
         let r = tree.create_element(r_name);
         let t = tree.create_element(t_name);
         let content = tree.create_text(text);
@@ -131,22 +137,23 @@ impl Paragraph {
         if needs_space_preserve(text) {
             tree.set_attr(t, "xml:space", "preserve");
         }
-        Run::from_node(r)
+        Run::from_node(self.part, r)
     }
 
     /// The paragraph's alignment, if `w:pPr/w:jc` is set to a recognized value
     /// (`w:val="distribute"` and other unrecognized values read as `None`).
     pub fn alignment(&self, doc: &Document) -> Option<Alignment> {
-        let tree = doc.tree();
+        let tree = doc.tree(self.part);
         let jc = self.ppr_child(tree, "jc")?;
-        Alignment::from_val(tree.attr(jc, &doc.qn("val"))?)
+        Alignment::from_val(tree.attr(jc, &doc.qn(self.part, "val"))?)
     }
 
     /// Set the paragraph alignment (`w:pPr/w:jc`).
     pub fn set_alignment(&self, doc: &mut Document, alignment: Alignment) -> Paragraph {
-        let val = doc.qn("val");
+        let val = doc.qn(self.part, "val");
         let jc = self.ensure_ppr_child(doc, "jc");
-        doc.tree_mut().set_attr(jc, val, alignment.to_val());
+        doc.tree_mut(self.part)
+            .set_attr(jc, val, alignment.to_val());
         *self
     }
 
@@ -156,9 +163,10 @@ impl Paragraph {
     /// display name (`"heading 1"`). Resolving a styleId to its display name requires
     /// reading `styles.xml`, which is a later milestone.
     pub fn style_id(&self, doc: &Document) -> Option<String> {
-        let tree = doc.tree();
+        let tree = doc.tree(self.part);
         let pstyle = self.ppr_child(tree, "pStyle")?;
-        tree.attr(pstyle, &doc.qn("val")).map(str::to_owned)
+        tree.attr(pstyle, &doc.qn(self.part, "val"))
+            .map(str::to_owned)
     }
 
     /// Set the paragraph's style id (`w:pPr/w:pStyle w:val`).
@@ -166,9 +174,9 @@ impl Paragraph {
     /// `style_id` is the internal styleId (e.g. `"Heading1"`), not the display name; see
     /// [`style_id`](Self::style_id).
     pub fn set_style_id(&self, doc: &mut Document, style_id: &str) -> Paragraph {
-        let val = doc.qn("val");
+        let val = doc.qn(self.part, "val");
         let pstyle = self.ensure_ppr_child(doc, "pStyle");
-        doc.tree_mut().set_attr(pstyle, val, style_id);
+        doc.tree_mut(self.part).set_attr(pstyle, val, style_id);
         *self
     }
 
@@ -191,11 +199,11 @@ impl Paragraph {
     /// The paragraph's `w:pPr`, creating it as the first child if absent (schema
     /// requires `w:pPr` before the paragraph content).
     fn ensure_ppr(&self, doc: &mut Document) -> NodeId {
-        if let Some(ppr) = self.ppr(doc.tree()) {
+        if let Some(ppr) = self.ppr(doc.tree(self.part)) {
             return ppr;
         }
-        let name = doc.qn("pPr");
-        let tree = doc.tree_mut();
+        let name = doc.qn(self.part, "pPr");
+        let tree = doc.tree_mut(self.part);
         let ppr = tree.create_element(name);
         tree.insert_child(self.node, 0, ppr);
         ppr
@@ -215,7 +223,7 @@ impl Paragraph {
     fn ensure_ppr_child(&self, doc: &mut Document, local: &str) -> NodeId {
         let ppr = self.ensure_ppr(doc);
         if let Some(existing) = {
-            let tree = doc.tree();
+            let tree = doc.tree(self.part);
             tree.children(ppr)
                 .iter()
                 .copied()
@@ -223,10 +231,15 @@ impl Paragraph {
         } {
             return existing;
         }
-        let name = doc.qn(local);
-        let index = ordered_insert_index(doc.tree(), ppr, rank_in(PPR_ORDER, local), PPR_ORDER);
-        let el = doc.tree_mut().create_element(name);
-        doc.tree_mut().insert_child(ppr, index, el);
+        let name = doc.qn(self.part, local);
+        let index = ordered_insert_index(
+            doc.tree(self.part),
+            ppr,
+            rank_in(PPR_ORDER, local),
+            PPR_ORDER,
+        );
+        let el = doc.tree_mut(self.part).create_element(name);
+        doc.tree_mut(self.part).insert_child(ppr, index, el);
         el
     }
 }

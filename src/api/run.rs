@@ -4,7 +4,8 @@ use crate::xml::{NodeId, XmlTree};
 
 use super::paragraph::append_run_text;
 use super::{
-    Document, Pt, RgbColor, is_wml_element, needs_space_preserve, ordered_insert_index, rank_in,
+    Document, PartId, Pt, RgbColor, is_wml_element, needs_space_preserve, ordered_insert_index,
+    rank_in,
 };
 
 /// Canonical `w:rPr` child order (ECMA-376 §17.3.2.28, `CT_RPr` sequence), local names
@@ -73,13 +74,14 @@ const RPR_ORDER: &[&str] = &[
 /// milestone.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Run {
+    part: PartId,
     node: NodeId,
 }
 
 impl Run {
-    /// Wrap a known-`w:r` node id.
-    pub(crate) fn from_node(node: NodeId) -> Self {
-        Run { node }
+    /// Wrap a known-`w:r` node id living in `part`.
+    pub(crate) fn from_node(part: PartId, node: NodeId) -> Self {
+        Run { part, node }
     }
 
     /// The run's underlying tree node id.
@@ -90,7 +92,7 @@ impl Run {
     /// The run's text: `w:t` verbatim, `w:tab` as a tab, `w:br` / `w:cr` as a newline.
     pub fn text(&self, doc: &Document) -> String {
         let mut out = String::new();
-        append_run_text(doc.tree(), self.node, &mut out);
+        append_run_text(doc.tree(self.part), self.node, &mut out);
         out
     }
 
@@ -113,8 +115,8 @@ impl Run {
     /// assert_eq!(r.text(&doc), "new");
     /// ```
     pub fn set_text(&self, doc: &mut Document, text: &str) -> Run {
-        let t_name = doc.qn("t");
-        let tree = doc.tree_mut();
+        let t_name = doc.qn(self.part, "t");
+        let tree = doc.tree_mut(self.part);
 
         let content: Vec<NodeId> = tree
             .children(self.node)
@@ -157,11 +159,11 @@ impl Run {
     /// `"none"` / `"0"` / `"false"` (a bare `w:u` reads as underlined). Direct properties
     /// only — see the [type docs](Self#direct-properties-only).
     pub fn is_underlined(&self, doc: &Document) -> bool {
-        let tree = doc.tree();
+        let tree = doc.tree(self.part);
         let Some(u) = self.rpr_child(tree, "u") else {
             return false;
         };
-        match tree.attr(u, &doc.qn("val")) {
+        match tree.attr(u, &doc.qn(self.part, "val")) {
             Some(v) => !matches!(v, "none" | "0" | "false"),
             None => true,
         }
@@ -169,25 +171,26 @@ impl Run {
 
     /// The run's font size, if `w:rPr/w:sz` is set (direct properties only).
     pub fn size(&self, doc: &Document) -> Option<Pt> {
-        let tree = doc.tree();
+        let tree = doc.tree(self.part);
         let sz = self.rpr_child(tree, "sz")?;
-        Pt::from_half_points_str(tree.attr(sz, &doc.qn("val"))?)
+        Pt::from_half_points_str(tree.attr(sz, &doc.qn(self.part, "val"))?)
     }
 
     /// The run's color, if `w:rPr/w:color` is set to a concrete value (`w:val="auto"`
     /// and unparsable values read as `None`; direct properties only).
     pub fn color(&self, doc: &Document) -> Option<RgbColor> {
-        let tree = doc.tree();
+        let tree = doc.tree(self.part);
         let color = self.rpr_child(tree, "color")?;
-        RgbColor::from_hex(tree.attr(color, &doc.qn("val"))?)
+        RgbColor::from_hex(tree.attr(color, &doc.qn(self.part, "val"))?)
     }
 
     /// The run's font (typeface) name, read from `w:rPr/w:rFonts` `w:ascii`
     /// (direct properties only).
     pub fn font(&self, doc: &Document) -> Option<String> {
-        let tree = doc.tree();
+        let tree = doc.tree(self.part);
         let rfonts = self.rpr_child(tree, "rFonts")?;
-        tree.attr(rfonts, &doc.qn("ascii")).map(str::to_owned)
+        tree.attr(rfonts, &doc.qn(self.part, "ascii"))
+            .map(str::to_owned)
     }
 
     /// Turn bold on or off.
@@ -213,8 +216,8 @@ impl Run {
     pub fn underline(&self, doc: &mut Document, on: bool) -> Run {
         if on {
             let u = self.ensure_rpr_child(doc, "u");
-            let val = doc.qn("val");
-            doc.tree_mut().set_attr(u, val, "single");
+            let val = doc.qn(self.part, "val");
+            doc.tree_mut(self.part).set_attr(u, val, "single");
         } else {
             self.remove_rpr_child(doc, "u");
         }
@@ -225,30 +228,31 @@ impl Run {
     /// value in half-points, matching python-docx.
     pub fn set_size(&self, doc: &mut Document, size: Pt) -> Run {
         let hp = size.to_half_points_string();
-        let val = doc.qn("val");
+        let val = doc.qn(self.part, "val");
         let sz = self.ensure_rpr_child(doc, "sz");
-        doc.tree_mut().set_attr(sz, val.clone(), hp.clone());
+        doc.tree_mut(self.part)
+            .set_attr(sz, val.clone(), hp.clone());
         let sz_cs = self.ensure_rpr_child(doc, "szCs");
-        doc.tree_mut().set_attr(sz_cs, val, hp);
+        doc.tree_mut(self.part).set_attr(sz_cs, val, hp);
         *self
     }
 
     /// Set the run color (`w:color w:val` as six uppercase hex digits).
     pub fn set_color(&self, doc: &mut Document, color: RgbColor) -> Run {
-        let val = doc.qn("val");
+        let val = doc.qn(self.part, "val");
         let el = self.ensure_rpr_child(doc, "color");
-        doc.tree_mut().set_attr(el, val, color.to_hex());
+        doc.tree_mut(self.part).set_attr(el, val, color.to_hex());
         *self
     }
 
     /// Set the run font (typeface). Writes `w:rFonts` `w:ascii` and `w:hAnsi` to `name`,
     /// the two attributes that cover Latin text.
     pub fn set_font(&self, doc: &mut Document, name: &str) -> Run {
-        let ascii = doc.qn("ascii");
-        let hansi = doc.qn("hAnsi");
+        let ascii = doc.qn(self.part, "ascii");
+        let hansi = doc.qn(self.part, "hAnsi");
         let el = self.ensure_rpr_child(doc, "rFonts");
-        doc.tree_mut().set_attr(el, ascii, name);
-        doc.tree_mut().set_attr(el, hansi, name);
+        doc.tree_mut(self.part).set_attr(el, ascii, name);
+        doc.tree_mut(self.part).set_attr(el, hansi, name);
         *self
     }
 
@@ -263,11 +267,11 @@ impl Run {
     /// The run's `w:rPr`, creating it as the first child if absent (schema requires
     /// `w:rPr` before the run content).
     fn ensure_rpr(&self, doc: &mut Document) -> NodeId {
-        if let Some(rpr) = self.rpr(doc.tree()) {
+        if let Some(rpr) = self.rpr(doc.tree(self.part)) {
             return rpr;
         }
-        let name = doc.qn("rPr");
-        let tree = doc.tree_mut();
+        let name = doc.qn(self.part, "rPr");
+        let tree = doc.tree_mut(self.part);
         let rpr = tree.create_element(name);
         tree.insert_child(self.node, 0, rpr);
         rpr
@@ -287,7 +291,7 @@ impl Run {
     fn ensure_rpr_child(&self, doc: &mut Document, local: &str) -> NodeId {
         let rpr = self.ensure_rpr(doc);
         if let Some(existing) = {
-            let tree = doc.tree();
+            let tree = doc.tree(self.part);
             tree.children(rpr)
                 .iter()
                 .copied()
@@ -295,27 +299,32 @@ impl Run {
         } {
             return existing;
         }
-        let name = doc.qn(local);
-        let index = ordered_insert_index(doc.tree(), rpr, rank_in(RPR_ORDER, local), RPR_ORDER);
-        let el = doc.tree_mut().create_element(name);
-        doc.tree_mut().insert_child(rpr, index, el);
+        let name = doc.qn(self.part, local);
+        let index = ordered_insert_index(
+            doc.tree(self.part),
+            rpr,
+            rank_in(RPR_ORDER, local),
+            RPR_ORDER,
+        );
+        let el = doc.tree_mut(self.part).create_element(name);
+        doc.tree_mut(self.part).insert_child(rpr, index, el);
         el
     }
 
     /// Remove a direct `w:rPr` child by local name, if present.
     fn remove_rpr_child(&self, doc: &mut Document, local: &str) {
-        if let Some(el) = self.rpr_child(doc.tree(), local) {
-            doc.tree_mut().remove_from_parent(el);
+        if let Some(el) = self.rpr_child(doc.tree(self.part), local) {
+            doc.tree_mut(self.part).remove_from_parent(el);
         }
     }
 
     /// Read a boolean toggle property (`w:b`, `w:i`) from `w:rPr`.
     fn has_toggle(&self, doc: &Document, local: &str) -> bool {
-        let tree = doc.tree();
+        let tree = doc.tree(self.part);
         let Some(el) = self.rpr_child(tree, local) else {
             return false;
         };
-        match tree.attr(el, &doc.qn("val")) {
+        match tree.attr(el, &doc.qn(self.part, "val")) {
             Some(v) => !matches!(v, "0" | "false"),
             None => true,
         }
@@ -326,8 +335,8 @@ impl Run {
         if on {
             let el = self.ensure_rpr_child(doc, local);
             // Clear an explicit `w:val="0"/"false"` so a bare element reads on.
-            let val_name = doc.qn("val");
-            let tree = doc.tree_mut();
+            let val_name = doc.qn(self.part, "val");
+            let tree = doc.tree_mut(self.part);
             if let Some(v) = tree.attr(el, &val_name) {
                 if matches!(v, "0" | "false") {
                     tree.remove_attr(el, &val_name);
