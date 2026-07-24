@@ -1,6 +1,8 @@
 //! The XML-tree fidelity guarantee: parse → serialize is semantically lossless for
 //! every XML part in a real `.docx`, and a mutation touches only its target.
 
+use std::path::{Path, PathBuf};
+
 use docxml::opc::Package;
 use docxml::xml::XmlTree;
 
@@ -8,6 +10,25 @@ use quick_xml::Reader;
 use quick_xml::events::{BytesRef, Event};
 
 const FIXTURE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/basic.docx");
+
+/// Every `.docx` fixture in `tests/fixtures/`, sorted for stable test output.
+fn all_fixtures() -> Vec<PathBuf> {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+    let mut fixtures: Vec<PathBuf> = std::fs::read_dir(&dir)
+        .unwrap_or_else(|e| panic!("reading {}: {e}", dir.display()))
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.path())
+        .filter(|p| p.extension().is_some_and(|ext| ext == "docx"))
+        .collect();
+    fixtures.sort();
+    assert!(
+        fixtures.len() >= 4,
+        "expected at least 4 .docx fixtures in {}, found {}",
+        dir.display(),
+        fixtures.len()
+    );
+    fixtures
+}
 
 /// A normalized XML token: the semantic content of an event stream with the
 /// permitted normalizations applied (empty vs start+end, escaping, entity merging).
@@ -159,25 +180,42 @@ fn assert_xml_semantically_equal(original: &[u8], serialized: &[u8]) {
 
 #[test]
 fn every_xml_part_roundtrips_semantically() {
-    let pkg = Package::open(FIXTURE).unwrap();
-    let mut checked = 0;
-    for part in pkg.parts() {
-        if !(part.name.ends_with(".xml") || part.name.ends_with(".rels")) {
-            continue;
-        }
-        let tree = XmlTree::parse(&part.data)
-            .unwrap_or_else(|e| panic!("parse failed for {}: {e}", part.name));
-        let serialized = tree.serialize();
-        assert_xml_semantically_equal(&part.data, &serialized);
+    for fixture in all_fixtures() {
+        let pkg = Package::open(&fixture)
+            .unwrap_or_else(|e| panic!("opening {}: {e}", fixture.display()));
+        let mut checked = 0;
+        for part in pkg.parts() {
+            if !(part.name.ends_with(".xml") || part.name.ends_with(".rels")) {
+                continue;
+            }
+            let tree = XmlTree::parse(&part.data).unwrap_or_else(|e| {
+                panic!(
+                    "parse failed for {} in {}: {e}",
+                    part.name,
+                    fixture.display()
+                )
+            });
+            let serialized = tree.serialize();
+            assert_xml_semantically_equal(&part.data, &serialized);
 
-        // Re-parse the serialized output and compare again, guarding against a
-        // serializer that emits well-formed-looking but unparseable bytes.
-        let reparsed = XmlTree::parse(&serialized)
-            .unwrap_or_else(|e| panic!("reparse failed for {}: {e}", part.name));
-        assert_xml_semantically_equal(&part.data, &reparsed.serialize());
-        checked += 1;
+            // Re-parse the serialized output and compare again, guarding against a
+            // serializer that emits well-formed-looking but unparseable bytes.
+            let reparsed = XmlTree::parse(&serialized).unwrap_or_else(|e| {
+                panic!(
+                    "reparse failed for {} in {}: {e}",
+                    part.name,
+                    fixture.display()
+                )
+            });
+            assert_xml_semantically_equal(&part.data, &reparsed.serialize());
+            checked += 1;
+        }
+        assert!(
+            checked > 0,
+            "no .xml/.rels parts found in {}",
+            fixture.display()
+        );
     }
-    assert!(checked > 0, "no .xml/.rels parts found in fixture");
 }
 
 #[test]
