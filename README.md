@@ -2,9 +2,10 @@
 
 **Create and edit `.docx` files in Rust — a [python-docx](https://python-docx.readthedocs.io/) for Rust.**
 
-> **Status: early development.** This version reserves the crate name and pins down the
-> architecture. The API below is a design preview, not yet implemented. Follow the repo
-> for progress.
+> **Status: functional, pre-1.0.** Open, create, edit, and save real documents with full
+> round-trip fidelity: paragraphs, runs, character/paragraph formatting, tables, sections,
+> headers/footers, and inline images all work (see the roadmap below). The API may change
+> between minor versions until 1.0.
 
 ## Why another docx crate?
 
@@ -22,7 +23,7 @@ court filing — silently drops everything the structs don't model.
 - **One code path.** Creating a document is editing an embedded blank one, exactly like
   python-docx's `default.docx`.
 
-## Design preview
+## Example
 
 ```rust,ignore
 use docxml::Document;
@@ -54,7 +55,7 @@ doc.save("contract-signed.docx")?;
 - [x] Character/paragraph formatting (underline, size, color, font, alignment, styles read)
 - [x] Tables (read rows/cells/text, merge awareness, create, `add_row`, cell `set_text`)
 - [x] Sections, headers/footers (page geometry read/set via `Length`; header/footer text read + edit through lazily parsed parts)
-- [ ] Images
+- [x] Images (inline pictures — read, add with EMU geometry, media part + content-type + relationship)
 - [ ] Styles (read + pass-through first, authoring later)
 
 ## License

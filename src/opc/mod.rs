@@ -93,6 +93,22 @@ impl Package {
         &self.parts
     }
 
+    /// Add a part to the package.
+    ///
+    /// The name is normalized to its OPC part-name form (any leading `/` is dropped). If
+    /// a part with that name already exists its bytes are **replaced in place**, keeping
+    /// its position in the part order; otherwise the new part is appended after the
+    /// existing parts. Replacing rather than erroring keeps callers that regenerate a
+    /// derived part (e.g. a media file or `[Content_Types].xml`) idempotent.
+    pub fn add_part(&mut self, name: String, data: Vec<u8>) {
+        let name = name.trim_start_matches('/').to_string();
+        if let Some(existing) = self.parts.iter_mut().find(|p| p.name == name) {
+            existing.data = data;
+        } else {
+            self.parts.push(Part { name, data });
+        }
+    }
+
     /// Look up a part by name (leading slashes ignored, per OPC part-name form).
     pub fn part(&self, name: &str) -> Option<&Part> {
         let name = name.trim_start_matches('/');

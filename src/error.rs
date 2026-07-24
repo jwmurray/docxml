@@ -15,6 +15,9 @@ pub enum Error {
 
     #[error("malformed XML: {0}")]
     Malformed(String),
+
+    #[error("image error: {0}")]
+    Image(String),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
