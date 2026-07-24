@@ -5,10 +5,12 @@
 //! typed document API ([`Document`], [`Paragraph`], [`Run`]), character/paragraph
 //! formatting (bold, italic, underline, size, color, font, alignment, styles), tables
 //! ([`Table`], [`Row`], [`Cell`] — read rows/cells/text, merge awareness, create, and
-//! edit), and sections with headers/footers ([`Section`], [`HeaderFooter`], [`Length`] —
-//! page geometry read/set, and header/footer text read and edit via lazily parsed parts)
-//! are implemented. See the [repository](https://github.com/jwmurray/docxml) for the
-//! architecture and roadmap.
+//! edit), sections with headers/footers ([`Section`], [`HeaderFooter`], [`Length`] —
+//! page geometry read/set, and header/footer text read and edit via lazily parsed parts),
+//! and inline images ([`Picture`] — read existing pictures, add new ones with EMU
+//! geometry, creating the media part, content-type, and relationship) are implemented.
+//! See the [repository](https://github.com/jwmurray/docxml) for the architecture and
+//! roadmap.
 //!
 //! `docxml` is built on a lossless core: every part of a package is preserved
 //! byte-for-byte unless explicitly modified, so editing existing documents and
@@ -35,7 +37,7 @@ pub mod opc;
 pub mod xml;
 
 pub use api::{
-    Alignment, Cell, Document, HeaderFooter, Length, Paragraph, Pt, RgbColor, Row, Run, Section,
-    Table, VMerge,
+    Alignment, Cell, Document, HeaderFooter, Length, Paragraph, Picture, Pt, RgbColor, Row, Run,
+    Section, Table, VMerge,
 };
 pub use error::{Error, Result};
