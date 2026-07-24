@@ -130,7 +130,7 @@ Kept deliberately minimal: `zip`, `quick-xml`, `thiserror`. Dev: `tempfile`.
 8. [x] Paragraph formatting (spacing/indent/line-spacing/tabs), breaks, field codes (PAGE/TOC) (PR #12)
 9. [x] Numbering / lists (numbering.xml authoring; List Bullet / List Number) (PR #13)
 10. [x] Header/footer part creation; first/even-page headers (PR #14)
-11. [ ] Table column widths, merge creation, grid-based cell addressing
+11. [x] Table column widths, merge creation, grid-based cell addressing (PR #15)
 12. [ ] Hyperlinks (write API with relationship creation)
 13. [ ] Section line numbering (w:lnNumType), paragraph frames (w:framePr, w:pBdr), hidden text (w:vanish)
 14. [ ] Styles authoring (styles.xml, docDefaults), style-aware formatting reads

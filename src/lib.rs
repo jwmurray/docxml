@@ -7,7 +7,8 @@
 //! line spacing, space before/after, indents, tab stops, keep-together/keep-with-next/
 //! page-break-before, styles), breaks and field codes (page/column/line breaks, `PAGE`/
 //! `TOC` fields), tables ([`Table`], [`Row`], [`Cell`] — read rows/cells/text, merge
-//! awareness, create, and edit), sections with headers/footers ([`Section`],
+//! awareness, create, and edit, plus column widths / fixed layout, grid-based cell
+//! addressing, and merge creation), sections with headers/footers ([`Section`],
 //! [`HeaderFooter`], [`Length`] — page geometry read/set, and header/footer text read and
 //! edit via lazily parsed parts), inline images ([`Picture`] — read existing pictures,
 //! add new ones with EMU geometry, creating the media part, content-type, and

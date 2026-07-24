@@ -18,6 +18,9 @@ pub enum Error {
 
     #[error("image error: {0}")]
     Image(String),
+
+    #[error("invalid merge: {0}")]
+    InvalidMerge(String),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
