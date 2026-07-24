@@ -252,6 +252,38 @@ impl Document {
         }
         para
     }
+
+    /// Append a heading paragraph carrying `text`, styled by level, and return it.
+    ///
+    /// Level `0` uses the `"Title"` style; levels `1..=9` use `"Heading{level}"`
+    /// (e.g. `2` → `"Heading2"`), matching python-docx's `Document.add_heading`. These
+    /// are style *ids*; the built-in blank template defines them, but an arbitrary
+    /// document may not — an undefined style id still writes but renders unstyled.
+    ///
+    /// # Panics
+    /// Panics if `level` is greater than `9`.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use docxml::Document;
+    ///
+    /// let mut doc = Document::new();
+    /// let h = doc.add_heading("Chapter 1", 1);
+    /// assert_eq!(h.style_id(&doc).as_deref(), Some("Heading1"));
+    /// assert_eq!(doc.add_heading("Title", 0).style_id(&doc).as_deref(), Some("Title"));
+    /// ```
+    pub fn add_heading(&mut self, text: &str, level: u8) -> Paragraph {
+        assert!(level <= 9, "heading level must be 0..=9, got {level}");
+        let style_id = if level == 0 {
+            "Title".to_string()
+        } else {
+            format!("Heading{level}")
+        };
+        let para = self.add_paragraph(text);
+        para.set_style_id(self, &style_id);
+        para
+    }
 }
 
 /// Determine the prefix the document root maps to a WordprocessingML main URI.
