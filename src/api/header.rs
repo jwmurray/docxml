@@ -496,7 +496,7 @@ fn build_hdr_ftr_xml(doc: &Document, root_local: &str) -> Vec<u8> {
 /// `id` and whose prefix resolves (via the in-scope namespace declarations) to a
 /// relationships namespace URI, transitional or strict. This is the namespace-correct way
 /// to read `r:id` without assuming the `r` prefix.
-fn rel_id_attr(tree: &XmlTree, node: NodeId) -> Option<&str> {
+pub(super) fn rel_id_attr(tree: &XmlTree, node: NodeId) -> Option<&str> {
     for (key, value) in tree.attrs(node) {
         let (prefix, local) = split_qname(key);
         if local != "id" {
@@ -515,7 +515,7 @@ fn rel_id_attr(tree: &XmlTree, node: NodeId) -> Option<&str> {
 /// the tree's root binds to the relationships URI — the write-side counterpart of
 /// [`rel_id_attr`]. Falls back to the conventional `r` prefix when the root declares none
 /// (in practice `word/document.xml` always declares `xmlns:r`).
-fn rel_id_attr_name(tree: &XmlTree) -> String {
+pub(super) fn rel_id_attr_name(tree: &XmlTree) -> String {
     let root = tree.root();
     for (key, value) in tree.attrs(root) {
         if !REL_URIS.contains(&value.as_str()) {

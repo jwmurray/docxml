@@ -39,7 +39,7 @@ mod units;
 pub use document::Document;
 pub use header::{HeaderFooter, HeaderFooterType};
 pub use numbering::NumberFormat;
-pub use paragraph::Paragraph;
+pub use paragraph::{HyperlinkInfo, Paragraph};
 pub use picture::Picture;
 pub use run::Run;
 pub use section::Section;

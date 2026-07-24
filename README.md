@@ -60,7 +60,7 @@ doc.save("contract-signed.docx")?;
 - [x] Numbering / lists (numbering.xml authoring; List Bullet / List Number, `create_numbering`, restartable lists)
 - [x] Header/footer part creation; first/even-page headers (`create_header`/`create_footer` with `HeaderFooterType`, `different_first_page`/`even_and_odd_headers` flags)
 - [x] Table column widths, merge creation, grid-based cell addressing (`set_column_widths`/`Cell::width`/`set_fixed_layout`, grid-based `Table::cell`, `Table::merge`)
-- [ ] Hyperlinks (write API with relationship creation)
+- [x] Hyperlinks (read `hyperlinks()`; `add_hyperlink`/`add_anchor_hyperlink` with External relationship creation, `add_bookmark`)
 - [ ] Section line numbering, paragraph frames/borders, hidden text
 - [ ] Styles authoring (styles.xml, docDefaults), style-aware formatting reads
 
