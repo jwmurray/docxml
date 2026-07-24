@@ -3,7 +3,10 @@
 
 use crate::xml::{NodeId, XmlTree};
 
-use super::{Document, Length, PartId, is_wml_element, ordered_insert_index, rank_in};
+use super::{
+    Document, Length, LineNumberRestart, LineNumbering, PartId, is_wml_element,
+    ordered_insert_index, rank_in,
+};
 
 /// Canonical `w:sectPr` child order (ECMA-376 §17.6.17, `CT_SectPr` — the
 /// `EG_HdrFtrReferences` group followed by the `EG_SectPrContents` sequence), local names
@@ -159,6 +162,80 @@ impl Section {
     pub fn set_different_first_page(&self, doc: &mut Document, on: bool) -> Section {
         self.set_sect_toggle(doc, "titlePg", on);
         *self
+    }
+
+    /// This section's line numbering (`w:sectPr/w:lnNumType`), or `None` when unset.
+    ///
+    /// Reads `w:countBy`, `w:start`, `w:distance` (as a twips [`Length`]), and `w:restart`.
+    /// Schema defaults fill in for absent attributes: `w:start` defaults to `1`, `w:restart`
+    /// to [`NewPage`](LineNumberRestart::NewPage), and an absent `w:countBy` reads as `0`.
+    pub fn line_numbering(&self, doc: &Document) -> Option<LineNumbering> {
+        let tree = doc.tree(self.part);
+        let el = self.sect_child(tree, "lnNumType")?;
+        let count_by = tree
+            .attr(el, &doc.qn(self.part, "countBy"))
+            .and_then(|v| v.trim().parse::<u32>().ok())
+            .unwrap_or(0);
+        let start = tree
+            .attr(el, &doc.qn(self.part, "start"))
+            .and_then(|v| v.trim().parse::<u32>().ok())
+            .unwrap_or(1);
+        let distance = tree
+            .attr(el, &doc.qn(self.part, "distance"))
+            .and_then(Length::from_twips_str);
+        let restart = tree
+            .attr(el, &doc.qn(self.part, "restart"))
+            .and_then(LineNumberRestart::from_val)
+            .unwrap_or(LineNumberRestart::NewPage);
+        Some(LineNumbering {
+            count_by,
+            start,
+            distance,
+            restart,
+        })
+    }
+
+    /// Set this section's line numbering (`w:sectPr/w:lnNumType`), creating the element in
+    /// `CT_SectPr` order if absent.
+    ///
+    /// `w:lnNumType` sits in `EG_SectPrContents` after `w:pgBorders` and before
+    /// `w:pgNumType` (ECMA-376 §17.6.17, `CT_SectPr`; present in [`SECTPR_ORDER`]). The
+    /// attributes are written in `CT_LineNumber` order (§17.6.8: `w:countBy`, `w:start`,
+    /// `w:distance`, `w:restart`). `w:countBy` is always written; attributes matching their
+    /// schema default are omitted — `w:start` when it is `1`, `w:distance` when `None`, and
+    /// `w:restart` when [`NewPage`](LineNumberRestart::NewPage). Any previously written values
+    /// are cleared first so a re-set never leaves a stale attribute.
+    pub fn set_line_numbering(&self, doc: &mut Document, ln: LineNumbering) -> Section {
+        let countby_attr = doc.qn(self.part, "countBy");
+        let start_attr = doc.qn(self.part, "start");
+        let distance_attr = doc.qn(self.part, "distance");
+        let restart_attr = doc.qn(self.part, "restart");
+        let el = self.ensure_sect_child(doc, "lnNumType");
+        let tree = doc.tree_mut(self.part);
+        // Clear the managed attributes so a re-set never leaves a stale value behind.
+        tree.remove_attr(el, &countby_attr);
+        tree.remove_attr(el, &start_attr);
+        tree.remove_attr(el, &distance_attr);
+        tree.remove_attr(el, &restart_attr);
+        // CT_LineNumber attribute order: countBy, start, distance, restart.
+        tree.set_attr(el, countby_attr, ln.count_by.to_string());
+        if ln.start != 1 {
+            tree.set_attr(el, start_attr, ln.start.to_string());
+        }
+        if let Some(distance) = ln.distance {
+            tree.set_attr(el, distance_attr, distance.to_twips_string());
+        }
+        if ln.restart != LineNumberRestart::NewPage {
+            tree.set_attr(el, restart_attr, ln.restart.to_val());
+        }
+        *self
+    }
+
+    /// Remove this section's line numbering, deleting `w:sectPr/w:lnNumType`.
+    pub fn clear_line_numbering(&self, doc: &mut Document) {
+        if let Some(el) = self.sect_child(doc.tree(self.part), "lnNumType") {
+            doc.tree_mut(self.part).remove_from_parent(el);
+        }
     }
 
     /// A direct `w:sectPr` child with the given WML local name, if present.

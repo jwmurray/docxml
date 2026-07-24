@@ -132,7 +132,7 @@ Kept deliberately minimal: `zip`, `quick-xml`, `thiserror`. Dev: `tempfile`.
 10. [x] Header/footer part creation; first/even-page headers (PR #14)
 11. [x] Table column widths, merge creation, grid-based cell addressing (PR #15)
 12. [x] Hyperlinks (read + write API with relationship creation; bookmarks) (PR #16)
-13. [ ] Section line numbering (w:lnNumType), paragraph frames (w:framePr, w:pBdr), hidden text (w:vanish)
+13. [x] Section line numbering (w:lnNumType), paragraph frames (w:framePr, w:pBdr), hidden text (w:vanish) (PR #17)
 14. [ ] Styles authoring (styles.xml, docDefaults), style-aware formatting reads
 
 Versioning: 0.x during the milestone sequence; API may break between minors until 1.0.
