@@ -2,7 +2,53 @@
 
 use crate::xml::{NodeId, XmlTree};
 
-use super::{Document, Run, is_wml_element, needs_space_preserve};
+use super::{
+    Alignment, Document, Run, is_wml_element, needs_space_preserve, ordered_insert_index, rank_in,
+};
+
+/// Canonical `w:pPr` child order (ECMA-376 §17.3.1.26, `CT_PPr` sequence), local names
+/// only. New properties are inserted to keep `w:pPr`'s children in this order so the
+/// output is schema-valid: `pStyle` comes first, `jc` sits late (after the spacing /
+/// indentation group), and `rPr` / `sectPr` come near the end. Unlisted children rank
+/// last and stay after authored properties.
+const PPR_ORDER: &[&str] = &[
+    "pStyle",
+    "keepNext",
+    "keepLines",
+    "pageBreakBefore",
+    "framePr",
+    "widowControl",
+    "numPr",
+    "suppressLineNumbers",
+    "pBdr",
+    "shd",
+    "tabs",
+    "suppressAutoHyphens",
+    "kinsoku",
+    "wordWrap",
+    "overflowPunct",
+    "topLinePunct",
+    "autoSpaceDE",
+    "autoSpaceDN",
+    "bidi",
+    "adjustRightInd",
+    "snapToGrid",
+    "spacing",
+    "ind",
+    "contextualSpacing",
+    "mirrorIndents",
+    "suppressOverlap",
+    "jc",
+    "textDirection",
+    "textAlignment",
+    "textboxTightWrap",
+    "outlineLvl",
+    "divId",
+    "cnfStyle",
+    "rPr",
+    "sectPr",
+    "pPrChange",
+];
 
 /// A lightweight handle to a `w:p` paragraph.
 ///
@@ -88,12 +134,100 @@ impl Paragraph {
         Run::from_node(r)
     }
 
+    /// The paragraph's alignment, if `w:pPr/w:jc` is set to a recognized value
+    /// (`w:val="distribute"` and other unrecognized values read as `None`).
+    pub fn alignment(&self, doc: &Document) -> Option<Alignment> {
+        let tree = doc.tree();
+        let jc = self.ppr_child(tree, "jc")?;
+        Alignment::from_val(tree.attr(jc, &doc.qn("val"))?)
+    }
+
+    /// Set the paragraph alignment (`w:pPr/w:jc`).
+    pub fn set_alignment(&self, doc: &mut Document, alignment: Alignment) -> Paragraph {
+        let val = doc.qn("val");
+        let jc = self.ensure_ppr_child(doc, "jc");
+        doc.tree_mut().set_attr(jc, val, alignment.to_val());
+        *self
+    }
+
+    /// The paragraph's style id, if `w:pPr/w:pStyle` is set.
+    ///
+    /// This is the *styleId* — the internal key such as `"Heading1"` — not the human
+    /// display name (`"heading 1"`). Resolving a styleId to its display name requires
+    /// reading `styles.xml`, which is a later milestone.
+    pub fn style_id(&self, doc: &Document) -> Option<String> {
+        let tree = doc.tree();
+        let pstyle = self.ppr_child(tree, "pStyle")?;
+        tree.attr(pstyle, &doc.qn("val")).map(str::to_owned)
+    }
+
+    /// Set the paragraph's style id (`w:pPr/w:pStyle w:val`).
+    ///
+    /// `style_id` is the internal styleId (e.g. `"Heading1"`), not the display name; see
+    /// [`style_id`](Self::style_id).
+    pub fn set_style_id(&self, doc: &mut Document, style_id: &str) -> Paragraph {
+        let val = doc.qn("val");
+        let pstyle = self.ensure_ppr_child(doc, "pStyle");
+        doc.tree_mut().set_attr(pstyle, val, style_id);
+        *self
+    }
+
     /// The paragraph's direct `w:r` children as node ids.
     fn run_nodes<'a>(&self, tree: &'a XmlTree) -> impl Iterator<Item = NodeId> + 'a {
         tree.children(self.node)
             .iter()
             .copied()
             .filter(move |&c| is_wml_element(tree, c, "r"))
+    }
+
+    /// The paragraph's `w:pPr`, if present.
+    fn ppr(&self, tree: &XmlTree) -> Option<NodeId> {
+        tree.children(self.node)
+            .iter()
+            .copied()
+            .find(|&c| is_wml_element(tree, c, "pPr"))
+    }
+
+    /// The paragraph's `w:pPr`, creating it as the first child if absent (schema
+    /// requires `w:pPr` before the paragraph content).
+    fn ensure_ppr(&self, doc: &mut Document) -> NodeId {
+        if let Some(ppr) = self.ppr(doc.tree()) {
+            return ppr;
+        }
+        let name = doc.qn("pPr");
+        let tree = doc.tree_mut();
+        let ppr = tree.create_element(name);
+        tree.insert_child(self.node, 0, ppr);
+        ppr
+    }
+
+    /// A direct `w:pPr` child with the given WML local name, if present.
+    fn ppr_child(&self, tree: &XmlTree, local: &str) -> Option<NodeId> {
+        let ppr = self.ppr(tree)?;
+        tree.children(ppr)
+            .iter()
+            .copied()
+            .find(|&c| is_wml_element(tree, c, local))
+    }
+
+    /// A direct `w:pPr` child with the given local name, creating it (in canonical
+    /// schema order) if absent. Creates `w:pPr` first if needed.
+    fn ensure_ppr_child(&self, doc: &mut Document, local: &str) -> NodeId {
+        let ppr = self.ensure_ppr(doc);
+        if let Some(existing) = {
+            let tree = doc.tree();
+            tree.children(ppr)
+                .iter()
+                .copied()
+                .find(|&c| is_wml_element(tree, c, local))
+        } {
+            return existing;
+        }
+        let name = doc.qn(local);
+        let index = ordered_insert_index(doc.tree(), ppr, rank_in(PPR_ORDER, local), PPR_ORDER);
+        let el = doc.tree_mut().create_element(name);
+        doc.tree_mut().insert_child(ppr, index, el);
+        el
     }
 }
 

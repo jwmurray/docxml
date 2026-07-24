@@ -1,9 +1,11 @@
 //! Create and edit `.docx` files — a [python-docx](https://python-docx.readthedocs.io/)
 //! for Rust.
 //!
-//! **Status: early development.** The OPC packaging layer, the lossless XML tree, and a
-//! basic typed document API ([`Document`], [`Paragraph`], [`Run`]) are implemented. See
-//! the [repository](https://github.com/jwmurray/docxml) for the architecture and roadmap.
+//! **Status: early development.** The OPC packaging layer, the lossless XML tree, a
+//! typed document API ([`Document`], [`Paragraph`], [`Run`]), and character/paragraph
+//! formatting (bold, italic, underline, size, color, font, alignment, styles) are
+//! implemented. See the [repository](https://github.com/jwmurray/docxml) for the
+//! architecture and roadmap.
 //!
 //! `docxml` is built on a lossless core: every part of a package is preserved
 //! byte-for-byte unless explicitly modified, so editing existing documents and
@@ -29,5 +31,5 @@ mod error;
 pub mod opc;
 pub mod xml;
 
-pub use api::{Document, Paragraph, Run};
+pub use api::{Alignment, Document, Paragraph, Pt, RgbColor, Run};
 pub use error::{Error, Result};

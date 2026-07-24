@@ -3,7 +3,59 @@
 use crate::xml::{NodeId, XmlTree};
 
 use super::paragraph::append_run_text;
-use super::{Document, is_wml_element, needs_space_preserve, split_qname};
+use super::{
+    Document, Pt, RgbColor, is_wml_element, needs_space_preserve, ordered_insert_index, rank_in,
+};
+
+/// Canonical `w:rPr` child order (ECMA-376 §17.3.2.28, `CT_RPr` sequence), local names
+/// only. New properties are inserted to keep `w:rPr`'s children in this order so the
+/// output is schema-valid. Note the practically important subsequence this milestone
+/// authors: `rStyle`, `rFonts`, `b`/`bCs`, `i`/`iCs`, then `color`, then `sz`/`szCs`,
+/// then `u` — color precedes size, and underline follows size (verified against the
+/// python-docx-generated `tests/fixtures/basic.docx`, whose colored/sized run serializes
+/// `<w:color .../><w:sz .../>`). Unlisted children rank last and stay after authored
+/// properties.
+const RPR_ORDER: &[&str] = &[
+    "rStyle",
+    "rFonts",
+    "b",
+    "bCs",
+    "i",
+    "iCs",
+    "caps",
+    "smallCaps",
+    "strike",
+    "dstrike",
+    "outline",
+    "shadow",
+    "emboss",
+    "imprint",
+    "noProof",
+    "snapToGrid",
+    "vanish",
+    "webHidden",
+    "color",
+    "spacing",
+    "w",
+    "kern",
+    "position",
+    "sz",
+    "szCs",
+    "highlight",
+    "u",
+    "effect",
+    "bdr",
+    "shd",
+    "fitText",
+    "vertAlign",
+    "rtl",
+    "cs",
+    "em",
+    "lang",
+    "eastAsianLayout",
+    "specVanish",
+    "oMath",
+];
 
 /// A lightweight handle to a `w:r` run — a contiguous span of text with uniform
 /// character formatting.
@@ -11,6 +63,14 @@ use super::{Document, is_wml_element, needs_space_preserve, split_qname};
 /// Like [`Paragraph`](super::Paragraph), `Run` is `Copy` and borrows nothing. The
 /// formatting setters return the run so calls chain:
 /// `run.bold(&mut doc, true).italic(&mut doc, true)`.
+///
+/// # Direct properties only
+///
+/// Every getter reads only the run's *direct* `w:rPr` — it does not resolve inheritance
+/// from the run's paragraph style, the `docDefaults`, or a linked character style. A run
+/// that renders bold in Word purely because its style is bold will report
+/// [`is_bold`](Self::is_bold) as `false` here. Style-inheritance resolution is a later
+/// milestone.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Run {
     node: NodeId,
@@ -78,15 +138,56 @@ impl Run {
 
     /// Whether the run is bold.
     ///
-    /// True when `w:rPr` carries a `w:b` whose `w:val` is not `"0"` / `"false"` (a bare
-    /// `w:b`, as Word writes, means on).
+    /// True when the direct `w:rPr` carries a `w:b` whose `w:val` is not `"0"` /
+    /// `"false"` (a bare `w:b`, as Word writes, means on). Reads direct properties only —
+    /// see the [type docs](Self#direct-properties-only).
     pub fn is_bold(&self, doc: &Document) -> bool {
         self.has_toggle(doc, "b")
     }
 
-    /// Whether the run is italic (see [`is_bold`](Self::is_bold) for the `w:val` rule).
+    /// Whether the run is italic (see [`is_bold`](Self::is_bold) for the `w:val` rule and
+    /// the direct-properties-only caveat).
     pub fn is_italic(&self, doc: &Document) -> bool {
         self.has_toggle(doc, "i")
+    }
+
+    /// Whether the run is underlined.
+    ///
+    /// True when the direct `w:rPr` carries a `w:u` whose `w:val` is present and not
+    /// `"none"` / `"0"` / `"false"` (a bare `w:u` reads as underlined). Direct properties
+    /// only — see the [type docs](Self#direct-properties-only).
+    pub fn is_underlined(&self, doc: &Document) -> bool {
+        let tree = doc.tree();
+        let Some(u) = self.rpr_child(tree, "u") else {
+            return false;
+        };
+        match tree.attr(u, &doc.qn("val")) {
+            Some(v) => !matches!(v, "none" | "0" | "false"),
+            None => true,
+        }
+    }
+
+    /// The run's font size, if `w:rPr/w:sz` is set (direct properties only).
+    pub fn size(&self, doc: &Document) -> Option<Pt> {
+        let tree = doc.tree();
+        let sz = self.rpr_child(tree, "sz")?;
+        Pt::from_half_points_str(tree.attr(sz, &doc.qn("val"))?)
+    }
+
+    /// The run's color, if `w:rPr/w:color` is set to a concrete value (`w:val="auto"`
+    /// and unparsable values read as `None`; direct properties only).
+    pub fn color(&self, doc: &Document) -> Option<RgbColor> {
+        let tree = doc.tree();
+        let color = self.rpr_child(tree, "color")?;
+        RgbColor::from_hex(tree.attr(color, &doc.qn("val"))?)
+    }
+
+    /// The run's font (typeface) name, read from `w:rPr/w:rFonts` `w:ascii`
+    /// (direct properties only).
+    pub fn font(&self, doc: &Document) -> Option<String> {
+        let tree = doc.tree();
+        let rfonts = self.rpr_child(tree, "rFonts")?;
+        tree.attr(rfonts, &doc.qn("ascii")).map(str::to_owned)
     }
 
     /// Turn bold on or off.
@@ -102,6 +203,52 @@ impl Run {
     /// Turn italic on or off (see [`bold`](Self::bold) for the representation).
     pub fn italic(&self, doc: &mut Document, on: bool) -> Run {
         self.set_toggle(doc, "i", on);
+        *self
+    }
+
+    /// Turn underline on or off.
+    ///
+    /// On sets `w:rPr/w:u w:val="single"`; off removes any `w:u`. Removal is the off
+    /// state (no `w:u w:val="none"` is emitted).
+    pub fn underline(&self, doc: &mut Document, on: bool) -> Run {
+        if on {
+            let u = self.ensure_rpr_child(doc, "u");
+            let val = doc.qn("val");
+            doc.tree_mut().set_attr(u, val, "single");
+        } else {
+            self.remove_rpr_child(doc, "u");
+        }
+        *self
+    }
+
+    /// Set the font size. Writes both `w:sz` and `w:szCs` (complex-script size) with the
+    /// value in half-points, matching python-docx.
+    pub fn set_size(&self, doc: &mut Document, size: Pt) -> Run {
+        let hp = size.to_half_points_string();
+        let val = doc.qn("val");
+        let sz = self.ensure_rpr_child(doc, "sz");
+        doc.tree_mut().set_attr(sz, val.clone(), hp.clone());
+        let sz_cs = self.ensure_rpr_child(doc, "szCs");
+        doc.tree_mut().set_attr(sz_cs, val, hp);
+        *self
+    }
+
+    /// Set the run color (`w:color w:val` as six uppercase hex digits).
+    pub fn set_color(&self, doc: &mut Document, color: RgbColor) -> Run {
+        let val = doc.qn("val");
+        let el = self.ensure_rpr_child(doc, "color");
+        doc.tree_mut().set_attr(el, val, color.to_hex());
+        *self
+    }
+
+    /// Set the run font (typeface). Writes `w:rFonts` `w:ascii` and `w:hAnsi` to `name`,
+    /// the two attributes that cover Latin text.
+    pub fn set_font(&self, doc: &mut Document, name: &str) -> Run {
+        let ascii = doc.qn("ascii");
+        let hansi = doc.qn("hAnsi");
+        let el = self.ensure_rpr_child(doc, "rFonts");
+        doc.tree_mut().set_attr(el, ascii, name);
+        doc.tree_mut().set_attr(el, hansi, name);
         *self
     }
 
@@ -126,18 +273,46 @@ impl Run {
         rpr
     }
 
-    /// Read a boolean toggle property (`w:b`, `w:i`) from `w:rPr`.
-    fn has_toggle(&self, doc: &Document, local: &str) -> bool {
-        let tree = doc.tree();
-        let Some(rpr) = self.rpr(tree) else {
-            return false;
-        };
-        let Some(el) = tree
-            .children(rpr)
+    /// A direct `w:rPr` child with the given WML local name, if present.
+    fn rpr_child(&self, tree: &XmlTree, local: &str) -> Option<NodeId> {
+        let rpr = self.rpr(tree)?;
+        tree.children(rpr)
             .iter()
             .copied()
             .find(|&c| is_wml_element(tree, c, local))
-        else {
+    }
+
+    /// A direct `w:rPr` child with the given local name, creating it (in canonical
+    /// schema order) if absent. Creates `w:rPr` first if needed.
+    fn ensure_rpr_child(&self, doc: &mut Document, local: &str) -> NodeId {
+        let rpr = self.ensure_rpr(doc);
+        if let Some(existing) = {
+            let tree = doc.tree();
+            tree.children(rpr)
+                .iter()
+                .copied()
+                .find(|&c| is_wml_element(tree, c, local))
+        } {
+            return existing;
+        }
+        let name = doc.qn(local);
+        let index = ordered_insert_index(doc.tree(), rpr, rank_in(RPR_ORDER, local), RPR_ORDER);
+        let el = doc.tree_mut().create_element(name);
+        doc.tree_mut().insert_child(rpr, index, el);
+        el
+    }
+
+    /// Remove a direct `w:rPr` child by local name, if present.
+    fn remove_rpr_child(&self, doc: &mut Document, local: &str) {
+        if let Some(el) = self.rpr_child(doc.tree(), local) {
+            doc.tree_mut().remove_from_parent(el);
+        }
+    }
+
+    /// Read a boolean toggle property (`w:b`, `w:i`) from `w:rPr`.
+    fn has_toggle(&self, doc: &Document, local: &str) -> bool {
+        let tree = doc.tree();
+        let Some(el) = self.rpr_child(tree, local) else {
             return false;
         };
         match tree.attr(el, &doc.qn("val")) {
@@ -149,45 +324,17 @@ impl Run {
     /// Set or clear a boolean toggle property (`w:b`, `w:i`) in `w:rPr`.
     fn set_toggle(&self, doc: &mut Document, local: &str, on: bool) {
         if on {
-            let rpr = self.ensure_rpr(doc);
-            let existing = {
-                let tree = doc.tree();
-                tree.children(rpr)
-                    .iter()
-                    .copied()
-                    .find(|&c| is_wml_element(tree, c, local))
-            };
-            match existing {
-                // Already present: clear an explicit `w:val="0"/"false"` so it reads on.
-                Some(el) => {
-                    let val_name = doc.qn("val");
-                    let tree = doc.tree_mut();
-                    if let Some(v) = tree.attr(el, &val_name) {
-                        if matches!(v, "0" | "false") {
-                            tree.remove_attr(el, &val_name);
-                        }
-                    }
-                }
-                None => {
-                    let name = doc.qn(local);
-                    let index = insertion_index(doc.tree(), rpr, rpr_rank(local));
-                    let el = doc.tree_mut().create_element(name);
-                    doc.tree_mut().insert_child(rpr, index, el);
+            let el = self.ensure_rpr_child(doc, local);
+            // Clear an explicit `w:val="0"/"false"` so a bare element reads on.
+            let val_name = doc.qn("val");
+            let tree = doc.tree_mut();
+            if let Some(v) = tree.attr(el, &val_name) {
+                if matches!(v, "0" | "false") {
+                    tree.remove_attr(el, &val_name);
                 }
             }
         } else {
-            let existing = {
-                let tree = doc.tree();
-                self.rpr(tree).and_then(|rpr| {
-                    tree.children(rpr)
-                        .iter()
-                        .copied()
-                        .find(|&c| is_wml_element(tree, c, local))
-                })
-            };
-            if let Some(el) = existing {
-                doc.tree_mut().remove_from_parent(el);
-            }
+            self.remove_rpr_child(doc, local);
         }
     }
 }
@@ -198,35 +345,4 @@ fn is_content_child(tree: &XmlTree, id: NodeId) -> bool {
         || is_wml_element(tree, id, "tab")
         || is_wml_element(tree, id, "br")
         || is_wml_element(tree, id, "cr")
-}
-
-/// Schema-order rank of the `w:rPr` children this module authors (lower comes first).
-/// Unlisted children rank last so authored properties slot in ahead of them.
-fn rpr_rank(local: &str) -> u32 {
-    match local {
-        "rStyle" => 0,
-        "b" => 1,
-        "bCs" => 2,
-        "i" => 3,
-        "iCs" => 4,
-        _ => u32::MAX,
-    }
-}
-
-/// The rank of an existing `w:rPr` child (unknown / non-WML children rank last).
-fn child_rank(tree: &XmlTree, id: NodeId) -> u32 {
-    match tree.name(id) {
-        Some(name) => rpr_rank(split_qname(name).1),
-        None => u32::MAX,
-    }
-}
-
-/// Index at which to insert a new `w:rPr` child of the given rank so ranks stay
-/// ascending: before the first existing child that ranks after it.
-fn insertion_index(tree: &XmlTree, rpr: NodeId, rank: u32) -> usize {
-    let children = tree.children(rpr);
-    children
-        .iter()
-        .position(|&c| child_rank(tree, c) > rank)
-        .unwrap_or(children.len())
 }

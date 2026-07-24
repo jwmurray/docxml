@@ -27,10 +27,12 @@
 mod document;
 mod paragraph;
 mod run;
+mod units;
 
 pub use document::Document;
 pub use paragraph::Paragraph;
 pub use run::Run;
+pub use units::{Alignment, Pt, RgbColor};
 
 use crate::xml::{NodeId, XmlTree};
 
@@ -74,6 +76,34 @@ fn is_wml_element(tree: &XmlTree, id: NodeId, local: &str) -> bool {
 /// text has leading or trailing whitespace (which XML would otherwise be free to trim).
 fn needs_space_preserve(text: &str) -> bool {
     text.starts_with(|c: char| c.is_whitespace()) || text.ends_with(|c: char| c.is_whitespace())
+}
+
+/// Schema-order rank of a child by local name, from a canonical order list: the child's
+/// position in `order`, or [`u32::MAX`] when it is not listed (unknown / pass-through
+/// content sorts last, so authored properties always slot in ahead of it).
+fn rank_in(order: &[&str], local: &str) -> u32 {
+    order
+        .iter()
+        .position(|&n| n == local)
+        .map(|i| i as u32)
+        .unwrap_or(u32::MAX)
+}
+
+/// Index at which to insert a new child of rank `new_rank` into `parent` so its children
+/// stay in ascending schema order: before the first existing child that ranks after it.
+/// `order` is the canonical local-name sequence for `parent`'s content model.
+fn ordered_insert_index(tree: &XmlTree, parent: NodeId, new_rank: u32, order: &[&str]) -> usize {
+    let children = tree.children(parent);
+    children
+        .iter()
+        .position(|&c| {
+            let rank = match tree.name(c) {
+                Some(name) => rank_in(order, split_qname(name).1),
+                None => u32::MAX,
+            };
+            rank > new_rank
+        })
+        .unwrap_or(children.len())
 }
 
 #[cfg(test)]

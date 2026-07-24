@@ -123,7 +123,7 @@ Kept deliberately minimal: `zip`, `quick-xml`, `thiserror`. Dev: `tempfile`.
 1. [x] OPC packaging layer + byte-level round-trip test (PR #1)
 2. [x] Lossless XML tree + semantic round-trip tests against real-world fixtures (PR #4)
 3. [x] `Document` / `Paragraph` / `Run` + text read/edit; embedded blank template (create) (PR #6)
-4. [ ] Character/paragraph formatting (bold, italic, size, color, alignment, styles read)
+4. [x] Character/paragraph formatting (bold, italic, size, color, alignment, styles read) (PR #7)
 5. [ ] Tables
 6. [ ] Sections, headers/footers
 7. [ ] Images (inline pictures, EMU geometry)
