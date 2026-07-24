@@ -134,6 +134,8 @@ Kept deliberately minimal: `zip`, `quick-xml`, `thiserror`. Dev: `tempfile`.
 12. [x] Hyperlinks (read + write API with relationship creation; bookmarks) (PR #16)
 13. [x] Section line numbering (w:lnNumType), paragraph frames (w:framePr, w:pBdr), hidden text (w:vanish) (PR #17)
 14. [x] Styles authoring (styles.xml, docDefaults), style-aware formatting reads (PR #18)
+15. [x] Table and cell borders (`w:tblBorders`, `w:tcBorders`; reuse of the paragraph
+    `BorderEdge`/`BorderStyle` model) (PR #19)
 
 All queued milestones are complete: the library now covers the measured production feature
 set at python-docx parity for creating and editing real documents.

@@ -36,7 +36,10 @@
 //! run and paragraph writers); [`Paragraph::style_name`] and [`Run::set_style_id`];
 //! [`Document::set_default_font`] writing `w:docDefaults`; and the style-aware effective
 //! reads [`Run::effective_bold`], `effective_italic`, `effective_size`, and `effective_font`
-//! that resolve through the `w:rStyle`/`w:pStyle` `w:basedOn` chains and `w:docDefaults`)
+//! that resolve through the `w:rStyle`/`w:pStyle` `w:basedOn` chains and `w:docDefaults`),
+//! and table and cell borders ([`Table::set_borders`] writing `w:tblBorders` outer and
+//! inside edges, [`Cell::set_borders`] writing `w:tcBorders`, reusing the [`BorderEdge`] /
+//! [`BorderStyle`] edge writers shared with paragraph borders)
 //! are implemented. See the
 //! [repository](https://github.com/jwmurray/docxml) for the architecture and roadmap.
 //!

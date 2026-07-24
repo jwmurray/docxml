@@ -27,7 +27,10 @@
 use crate::error::{Error, Result};
 use crate::xml::{NodeId, XmlTree};
 
-use super::{Document, Length, Paragraph, PartId, is_wml_element, ordered_insert_index, rank_in};
+use super::{
+    BorderEdge, Document, Length, Paragraph, PartId, insert_border_edge, is_wml_element,
+    ordered_insert_index, rank_in, read_border_edge,
+};
 
 /// Canonical `w:tcPr` child order (ECMA-376 §17.4.70, `CT_TcPr` sequence), local names
 /// only. New properties are inserted to keep `w:tcPr`'s children in this order so the
@@ -76,6 +79,20 @@ const TBLPR_ORDER: &[&str] = &[
     "tblCaption",
     "tblDescription",
     "tblPrChange",
+];
+
+/// Canonical `w:tblBorders` child order (ECMA-376 §17.4.39, `CT_TblBorders` sequence),
+/// local names only. The transitional schema names the horizontal edges `left`/`right`
+/// (the strict schema uses `start`/`end`); we write and match the transitional names Word
+/// emits. Sequence: `top`, `left`, `bottom`, `right`, `insideH`, `insideV`.
+const TBL_BORDERS_ORDER: &[&str] = &["top", "left", "bottom", "right", "insideH", "insideV"];
+
+/// Canonical `w:tcBorders` child order (ECMA-376 §17.4.66, `CT_TcBorders` sequence), local
+/// names only, transitional (`left`/`right`) naming. Sequence: `top`, `left`, `bottom`,
+/// `right`, `insideH`, `insideV`, `tl2br`, `tr2bl` — this milestone writes the four side
+/// edges; the diagonal/inside names are listed so any pass-through content keeps its slot.
+const TC_BORDERS_ORDER: &[&str] = &[
+    "top", "left", "bottom", "right", "insideH", "insideV", "tl2br", "tr2bl",
 ];
 
 /// A lightweight handle to a `w:tbl` table.
@@ -441,6 +458,105 @@ impl Table {
         }
         Ok(())
     }
+
+    /// Set the table's borders (`w:tblPr/w:tblBorders`).
+    ///
+    /// `edge` is applied to the four outer edges (`w:top`, `w:left`, `w:bottom`, `w:right`)
+    /// and `inside` to the two interior edges (`w:insideH`, `w:insideV`); a `None` argument
+    /// omits its edges. The children are (re)built in `CT_TblBorders` order — `w:top`,
+    /// `w:left`, `w:bottom`, `w:right`, `w:insideH`, `w:insideV` (ECMA-376 §17.4.39;
+    /// [`TBL_BORDERS_ORDER`]) — so any unmodeled pass-through child stays after them. When
+    /// both `edge` and `inside` are `None` the whole `w:tblBorders` is removed (an empty one
+    /// would be pointless). `w:tblBorders` itself sits in `CT_TblPr` order after `w:tblInd`
+    /// and before `w:shd` (present in [`TBLPR_ORDER`]).
+    ///
+    /// Border edges write with the transitional `left`/`right` names Word emits, and each
+    /// edge's `w:val`/`w:sz`/`w:space`/`w:color` attributes are written exactly as paragraph
+    /// borders are (`w:sz` in eighths of a point; a `None` color writes `w:color="auto"`).
+    pub fn set_borders(
+        &self,
+        doc: &mut Document,
+        edge: Option<BorderEdge>,
+        inside: Option<BorderEdge>,
+    ) -> Table {
+        if edge.is_none() && inside.is_none() {
+            let tree = doc.tree(self.part);
+            if let Some(tblpr) = tree
+                .children(self.node)
+                .iter()
+                .copied()
+                .find(|&c| is_wml_element(tree, c, "tblPr"))
+            {
+                if let Some(borders) = tree
+                    .children(tblpr)
+                    .iter()
+                    .copied()
+                    .find(|&c| is_wml_element(tree, c, "tblBorders"))
+                {
+                    doc.tree_mut(self.part).remove_from_parent(borders);
+                }
+            }
+            return *self;
+        }
+        let tblpr = self.ensure_tbl_pr(doc);
+        let borders = ensure_ordered_child(doc, self.part, tblpr, "tblBorders", TBLPR_ORDER);
+        // Remove the six managed edges, then rebuild the present ones in schema order.
+        for (local, e) in [
+            ("top", edge),
+            ("left", edge),
+            ("bottom", edge),
+            ("right", edge),
+            ("insideH", inside),
+            ("insideV", inside),
+        ] {
+            let existing = {
+                let tree = doc.tree(self.part);
+                tree.children(borders)
+                    .iter()
+                    .copied()
+                    .find(|&c| is_wml_element(tree, c, local))
+            };
+            if let Some(el) = existing {
+                doc.tree_mut(self.part).remove_from_parent(el);
+            }
+            if let Some(e) = e {
+                insert_border_edge(doc, self.part, borders, local, e, TBL_BORDERS_ORDER);
+            }
+        }
+        *self
+    }
+
+    /// The table's `(edge, inside)` borders (`w:tblPr/w:tblBorders`).
+    ///
+    /// This is the simplified inverse of [`set_borders`](Self::set_borders): the four outer
+    /// edges are represented by a single `edge` value and the two interior edges by a single
+    /// `inside` value, so this reads `edge` from `w:top` and `inside` from `w:insideH` — it
+    /// does not report each of the six edges independently. An edge is `Some` only when that
+    /// child is present *and* carries a modeled [`BorderStyle`](super::BorderStyle); anything
+    /// else (absent child, unmodeled `w:val`) reads as `None`.
+    pub fn borders(&self, doc: &Document) -> (Option<BorderEdge>, Option<BorderEdge>) {
+        let tree = doc.tree(self.part);
+        let Some(tblpr) = tree
+            .children(self.node)
+            .iter()
+            .copied()
+            .find(|&c| is_wml_element(tree, c, "tblPr"))
+        else {
+            return (None, None);
+        };
+        let Some(borders) = tree
+            .children(tblpr)
+            .iter()
+            .copied()
+            .find(|&c| is_wml_element(tree, c, "tblBorders"))
+        else {
+            return (None, None);
+        };
+        (
+            read_border_edge(doc, self.part, borders, "top"),
+            read_border_edge(doc, self.part, borders, "insideH"),
+        )
+    }
 }
 
 impl Row {
@@ -598,6 +714,83 @@ impl Cell {
         let tree = doc.tree_mut(self.part);
         tree.set_attr(tcw, w_attr, width.to_twips_string());
         tree.set_attr(tcw, type_attr, "dxa");
+    }
+
+    /// Set the cell's borders (`w:tcPr/w:tcBorders`).
+    ///
+    /// Each of `top`, `bottom`, `left`, `right` writes (or replaces) the matching
+    /// `w:tcBorders` edge; a `None` edge omits it. The edges are (re)built in `CT_TcBorders`
+    /// order — `w:top`, `w:left`, `w:bottom`, `w:right` (ECMA-376 §17.4.66;
+    /// [`TC_BORDERS_ORDER`]), the transitional `left`/`right` names Word emits — so any
+    /// pass-through `w:insideH`/`w:insideV`/`w:tl2br`/`w:tr2bl` stays after them. When all
+    /// four are `None` the whole `w:tcBorders` is removed. `w:tcBorders` sits in `CT_TcPr`
+    /// order after `w:vMerge` and before `w:shd` (present in [`TCPR_ORDER`]).
+    ///
+    /// Each edge's `w:val`/`w:sz`/`w:space`/`w:color` attributes are written exactly as
+    /// paragraph borders are (`w:sz` in eighths of a point; a `None` color writes
+    /// `w:color="auto"`).
+    pub fn set_borders(
+        &self,
+        doc: &mut Document,
+        top: Option<BorderEdge>,
+        bottom: Option<BorderEdge>,
+        left: Option<BorderEdge>,
+        right: Option<BorderEdge>,
+    ) -> Cell {
+        if top.is_none() && bottom.is_none() && left.is_none() && right.is_none() {
+            if let Some(borders) = self.tc_pr_child(doc.tree(self.part), "tcBorders") {
+                doc.tree_mut(self.part).remove_from_parent(borders);
+            }
+            return *self;
+        }
+        let borders = self.ensure_tc_pr_child(doc, "tcBorders");
+        // Remove the four managed edges, then rebuild the present ones in schema order.
+        for (local, edge) in [
+            ("top", top),
+            ("left", left),
+            ("bottom", bottom),
+            ("right", right),
+        ] {
+            let existing = {
+                let tree = doc.tree(self.part);
+                tree.children(borders)
+                    .iter()
+                    .copied()
+                    .find(|&c| is_wml_element(tree, c, local))
+            };
+            if let Some(el) = existing {
+                doc.tree_mut(self.part).remove_from_parent(el);
+            }
+            if let Some(edge) = edge {
+                insert_border_edge(doc, self.part, borders, local, edge, TC_BORDERS_ORDER);
+            }
+        }
+        *self
+    }
+
+    /// The cell's borders as `(top, bottom, left, right)` (`w:tcPr/w:tcBorders`).
+    ///
+    /// Each edge is `Some` only when the matching `w:tcBorders` child is present *and*
+    /// carries a modeled [`BorderStyle`](super::BorderStyle); anything else reads as `None`.
+    /// This is the inverse of [`set_borders`](Self::set_borders).
+    pub fn borders(
+        &self,
+        doc: &Document,
+    ) -> (
+        Option<BorderEdge>,
+        Option<BorderEdge>,
+        Option<BorderEdge>,
+        Option<BorderEdge>,
+    ) {
+        let Some(borders) = self.tc_pr_child(doc.tree(self.part), "tcBorders") else {
+            return (None, None, None, None);
+        };
+        (
+            read_border_edge(doc, self.part, borders, "top"),
+            read_border_edge(doc, self.part, borders, "bottom"),
+            read_border_edge(doc, self.part, borders, "left"),
+            read_border_edge(doc, self.part, borders, "right"),
+        )
     }
 
     /// The cell's `w:tcPr`, if present.

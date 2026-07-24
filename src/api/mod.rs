@@ -148,6 +148,78 @@ fn ordered_insert_index(tree: &XmlTree, parent: NodeId, new_rank: u32, order: &[
         .unwrap_or(children.len())
 }
 
+/// Read a `CT_Border` edge child (`local`) of `parent` into a [`BorderEdge`], or `None`
+/// when that child is absent or its `w:val` is a style this API does not model (the
+/// [`BorderStyle`] enum is closed). `w:sz`/`w:space` default to `0` when missing or
+/// unparsable, and `w:color="auto"` (or an unparsable color) reads as `color` `None`.
+///
+/// Shared by paragraph borders (`w:pBdr`), table borders (`w:tblBorders`), and cell
+/// borders (`w:tcBorders`) — every `CT_Border` reads identically.
+fn read_border_edge(
+    doc: &Document,
+    part: PartId,
+    parent: NodeId,
+    local: &str,
+) -> Option<BorderEdge> {
+    let tree = doc.tree(part);
+    let el = tree
+        .children(parent)
+        .iter()
+        .copied()
+        .find(|&c| is_wml_element(tree, c, local))?;
+    let style = BorderStyle::from_val(tree.attr(el, &doc.qn(part, "val"))?)?;
+    let size = tree
+        .attr(el, &doc.qn(part, "sz"))
+        .and_then(|v| v.trim().parse::<u8>().ok())
+        .unwrap_or(0);
+    let space = tree
+        .attr(el, &doc.qn(part, "space"))
+        .and_then(|v| v.trim().parse::<u8>().ok())
+        .unwrap_or(0);
+    let color = tree
+        .attr(el, &doc.qn(part, "color"))
+        .and_then(RgbColor::from_hex);
+    Some(BorderEdge {
+        style,
+        size,
+        space,
+        color,
+    })
+}
+
+/// Create a `CT_Border` edge element `local` carrying the edge's `w:val`, `w:sz`,
+/// `w:space`, and `w:color` (a `None` color writes `w:color="auto"`), and insert it into
+/// `parent` at its position in schema `order`. Attribute order is `val, sz, space, color`.
+///
+/// Shared by paragraph, table, and cell border writes — every `CT_Border` writes
+/// identically; only the parent element and its `order` differ.
+fn insert_border_edge(
+    doc: &mut Document,
+    part: PartId,
+    parent: NodeId,
+    local: &str,
+    edge: BorderEdge,
+    order: &[&str],
+) {
+    let val_attr = doc.qn(part, "val");
+    let sz_attr = doc.qn(part, "sz");
+    let space_attr = doc.qn(part, "space");
+    let color_attr = doc.qn(part, "color");
+    let name = doc.qn(part, local);
+    let index = ordered_insert_index(doc.tree(part), parent, rank_in(order, local), order);
+    let tree = doc.tree_mut(part);
+    let el = tree.create_element(name);
+    // CT_Border attribute order: val, then sz, space, and color.
+    tree.set_attr(el, val_attr, edge.style.to_val());
+    tree.set_attr(el, sz_attr, edge.size.to_string());
+    tree.set_attr(el, space_attr, edge.space.to_string());
+    match edge.color {
+        Some(color) => tree.set_attr(el, color_attr, color.to_hex()),
+        None => tree.set_attr(el, color_attr, "auto"),
+    }
+    tree.insert_child(parent, index, el);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

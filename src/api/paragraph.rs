@@ -4,9 +4,9 @@ use crate::xml::{NodeId, XmlTree};
 
 use super::header::{rel_id_attr, rel_id_attr_name};
 use super::{
-    Alignment, BorderEdge, BorderStyle, Document, FrameAnchor, FrameOptions, FrameWrap, Length,
-    LineSpacing, PartId, Pt, RgbColor, Run, TabAlignment, TabLeader, is_wml_element,
-    needs_space_preserve, ordered_insert_index, rank_in,
+    Alignment, BorderEdge, Document, FrameAnchor, FrameOptions, FrameWrap, Length, LineSpacing,
+    PartId, Pt, Run, TabAlignment, TabLeader, insert_border_edge, is_wml_element,
+    needs_space_preserve, ordered_insert_index, rank_in, read_border_edge,
 };
 
 /// The relationship type of a hyperlink relationship (the transitional URI Word writes).
@@ -747,8 +747,9 @@ impl Paragraph {
     /// This paragraph's borders as `(top, bottom, left, right)` (`w:pPr/w:pBdr`).
     ///
     /// Each edge is `Some` only when the matching `w:pBdr` child is present *and* carries a
-    /// modeled [`BorderStyle`]; an edge whose `w:val` is a style this API does not model
-    /// reads back as `None` (the enum is closed — see [`BorderStyle`]). `w:color="auto"` (or
+    /// modeled [`BorderStyle`](super::BorderStyle); an edge whose `w:val` is a style this API
+    /// does not model reads back as `None` (the enum is closed — see
+    /// [`BorderStyle`](super::BorderStyle)). `w:color="auto"` (or
     /// an unparsable color) reads as [`color`](BorderEdge::color) `None`.
     pub fn borders(
         &self,
@@ -759,35 +760,10 @@ impl Paragraph {
         Option<BorderEdge>,
         Option<BorderEdge>,
     ) {
-        let tree = doc.tree(self.part);
-        let Some(pbdr) = self.ppr_child(tree, "pBdr") else {
+        let Some(pbdr) = self.ppr_child(doc.tree(self.part), "pBdr") else {
             return (None, None, None, None);
         };
-        let read_edge = |local: &str| -> Option<BorderEdge> {
-            let el = tree
-                .children(pbdr)
-                .iter()
-                .copied()
-                .find(|&c| is_wml_element(tree, c, local))?;
-            let style = BorderStyle::from_val(tree.attr(el, &doc.qn(self.part, "val"))?)?;
-            let size = tree
-                .attr(el, &doc.qn(self.part, "sz"))
-                .and_then(|v| v.trim().parse::<u8>().ok())
-                .unwrap_or(0);
-            let space = tree
-                .attr(el, &doc.qn(self.part, "space"))
-                .and_then(|v| v.trim().parse::<u8>().ok())
-                .unwrap_or(0);
-            let color = tree
-                .attr(el, &doc.qn(self.part, "color"))
-                .and_then(RgbColor::from_hex);
-            Some(BorderEdge {
-                style,
-                size,
-                space,
-                color,
-            })
-        };
+        let read_edge = |local: &str| read_border_edge(doc, self.part, pbdr, local);
         (
             read_edge("top"),
             read_edge("bottom"),
@@ -839,7 +815,7 @@ impl Paragraph {
             ("right", right),
         ] {
             if let Some(edge) = edge {
-                self.insert_border_edge(doc, pbdr, local, edge);
+                insert_border_edge(doc, self.part, pbdr, local, edge, PBDR_ORDER);
             }
         }
         *self
@@ -1100,34 +1076,6 @@ impl Paragraph {
         let el = doc.tree_mut(self.part).create_element(name);
         doc.tree_mut(self.part).insert_child(numpr, index, el);
         el
-    }
-
-    /// Create a `w:pBdr` edge element (`w:top`/`w:left`/`w:bottom`/`w:right`) carrying the
-    /// edge's `w:val`, `w:sz`, `w:space`, and `w:color`, and insert it into `pbdr` in
-    /// `CT_PBdr` order. A `None` color writes `w:color="auto"`.
-    fn insert_border_edge(&self, doc: &mut Document, pbdr: NodeId, local: &str, edge: BorderEdge) {
-        let val_attr = doc.qn(self.part, "val");
-        let sz_attr = doc.qn(self.part, "sz");
-        let space_attr = doc.qn(self.part, "space");
-        let color_attr = doc.qn(self.part, "color");
-        let name = doc.qn(self.part, local);
-        let index = ordered_insert_index(
-            doc.tree(self.part),
-            pbdr,
-            rank_in(PBDR_ORDER, local),
-            PBDR_ORDER,
-        );
-        let tree = doc.tree_mut(self.part);
-        let el = tree.create_element(name);
-        // CT_Border attribute order: val, then sz, space, and color.
-        tree.set_attr(el, val_attr, edge.style.to_val());
-        tree.set_attr(el, sz_attr, edge.size.to_string());
-        tree.set_attr(el, space_attr, edge.space.to_string());
-        match edge.color {
-            Some(color) => tree.set_attr(el, color_attr, color.to_hex()),
-            None => tree.set_attr(el, color_attr, "auto"),
-        }
-        tree.insert_child(pbdr, index, el);
     }
 
     /// A direct `w:pPr` child with the given WML local name, if present.
