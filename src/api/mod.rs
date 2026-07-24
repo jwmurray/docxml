@@ -27,6 +27,7 @@
 mod document;
 mod field;
 mod header;
+mod numbering;
 mod paragraph;
 mod picture;
 mod run;
@@ -36,6 +37,7 @@ mod units;
 
 pub use document::Document;
 pub use header::HeaderFooter;
+pub use numbering::NumberFormat;
 pub use paragraph::Paragraph;
 pub use picture::Picture;
 pub use run::Run;
