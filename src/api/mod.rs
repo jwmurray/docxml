@@ -32,11 +32,12 @@ mod paragraph;
 mod picture;
 mod run;
 mod section;
+mod settings;
 mod table;
 mod units;
 
 pub use document::Document;
-pub use header::HeaderFooter;
+pub use header::{HeaderFooter, HeaderFooterType};
 pub use numbering::NumberFormat;
 pub use paragraph::Paragraph;
 pub use picture::Picture;

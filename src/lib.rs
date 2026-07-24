@@ -14,7 +14,11 @@
 //! relationship), and numbering / lists ([`NumberFormat`] — read a paragraph's numbering
 //! (direct or style-resolved), apply/clear it, `add_bullet_paragraph` /
 //! `add_numbered_paragraph` convenience, and `create_numbering` for independent restartable
-//! list definitions, creating the numbering part when absent) are implemented. See the
+//! list definitions, creating the numbering part when absent), and header/footer part
+//! creation ([`HeaderFooterType`] — create default/first/even headers and footers, building
+//! the part, content-type, and relationship; `add_paragraph` into them; the
+//! `w:titlePg` different-first-page flag and the `w:evenAndOddHeaders` settings flag,
+//! creating `word/settings.xml` when absent) are implemented. See the
 //! [repository](https://github.com/jwmurray/docxml) for the architecture and roadmap.
 //!
 //! `docxml` is built on a lossless core: every part of a package is preserved
@@ -42,7 +46,8 @@ pub mod opc;
 pub mod xml;
 
 pub use api::{
-    Alignment, BreakType, Cell, Document, HeaderFooter, Length, LineSpacing, NumberFormat,
-    Paragraph, Picture, Pt, RgbColor, Row, Run, Section, TabAlignment, TabLeader, Table, VMerge,
+    Alignment, BreakType, Cell, Document, HeaderFooter, HeaderFooterType, Length, LineSpacing,
+    NumberFormat, Paragraph, Picture, Pt, RgbColor, Row, Run, Section, TabAlignment, TabLeader,
+    Table, VMerge,
 };
 pub use error::{Error, Result};
