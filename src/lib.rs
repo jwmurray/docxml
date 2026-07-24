@@ -1,19 +1,33 @@
 //! Create and edit `.docx` files — a [python-docx](https://python-docx.readthedocs.io/)
 //! for Rust.
 //!
-//! **Status: early development.** The OPC packaging layer and the lossless XML tree
-//! are implemented; the typed document API is not yet. See the
-//! [repository](https://github.com/jwmurray/docxml) for the architecture and roadmap.
+//! **Status: early development.** The OPC packaging layer, the lossless XML tree, and a
+//! basic typed document API ([`Document`], [`Paragraph`], [`Run`]) are implemented. See
+//! the [repository](https://github.com/jwmurray/docxml) for the architecture and roadmap.
 //!
 //! `docxml` is built on a lossless core: every part of a package is preserved
 //! byte-for-byte unless explicitly modified, so editing existing documents and
-//! templates is safe. A typed handle API (`Document`, `Paragraph`, `Run`, `Table`)
-//! will layer ergonomics on top.
+//! templates is safe. The typed handle API layers ergonomics on top.
+//!
+//! ```rust,ignore
+//! use docxml::Document;
+//!
+//! let mut doc = Document::open("contract.docx")?;
+//! for para in doc.paragraphs() {
+//!     println!("{}", para.text(&doc));
+//! }
+//! let p = doc.add_paragraph("Signed and agreed:");
+//! p.add_run(&mut doc, "John Murray").bold(&mut doc, true);
+//! doc.save("contract-signed.docx")?;
+//! # Ok::<(), docxml::Error>(())
+//! ```
 
 #![forbid(unsafe_code)]
 
+mod api;
 mod error;
 pub mod opc;
 pub mod xml;
 
+pub use api::{Document, Paragraph, Run};
 pub use error::{Error, Result};
