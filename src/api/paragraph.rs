@@ -357,10 +357,8 @@ impl Paragraph {
 
     /// Set the paragraph alignment (`w:pPr/w:jc`).
     pub fn set_alignment(&self, doc: &mut Document, alignment: Alignment) -> Paragraph {
-        let val = doc.qn(self.part, "val");
-        let jc = self.ensure_ppr_child(doc, "jc");
-        doc.tree_mut(self.part)
-            .set_attr(jc, val, alignment.to_val());
+        let ppr = self.ensure_ppr(doc);
+        set_alignment_in(doc, self.part, ppr, alignment);
         *self
     }
 
@@ -374,6 +372,30 @@ impl Paragraph {
         let pstyle = self.ppr_child(tree, "pStyle")?;
         tree.attr(pstyle, &doc.qn(self.part, "val"))
             .map(str::to_owned)
+    }
+
+    /// The paragraph's style *display name*, resolved through `styles.xml`.
+    ///
+    /// Where [`style_id`](Self::style_id) returns the internal key (`"Heading1"`), this
+    /// resolves that id to the human name Word shows (`"heading 1"`) by reading the style's
+    /// `w:name`. Takes `&mut Document` because it parses `styles.xml` through the lazily
+    /// cached part; the parse does not mark anything modified, so a read leaves every part
+    /// byte-identical on save. `None` when the paragraph has no `w:pStyle`, the style id is
+    /// not defined in `styles.xml`, or the style has no `w:name`.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use docxml::Document;
+    ///
+    /// let mut doc = Document::new();
+    /// let h = doc.add_heading("Chapter 1", 1);
+    /// assert_eq!(h.style_name(&mut doc).as_deref(), Some("heading 1"));
+    /// ```
+    pub fn style_name(&self, doc: &mut Document) -> Option<String> {
+        let style_id = self.style_id(doc)?;
+        let style = doc.style_by_id(&style_id)?;
+        style.display_name(doc)
     }
 
     /// Set the paragraph's style id (`w:pPr/w:pStyle w:val`).
@@ -484,13 +506,8 @@ impl Paragraph {
     /// [`space_after`](Self::space_after); this touches only `w:line` and `w:lineRule`,
     /// leaving any `w:before` / `w:after` intact.
     pub fn set_line_spacing(&self, doc: &mut Document, spacing: LineSpacing) -> Paragraph {
-        let (line, rule) = spacing.to_line_and_rule();
-        let line_attr = doc.qn(self.part, "line");
-        let rule_attr = doc.qn(self.part, "lineRule");
-        let sp = self.ensure_ppr_child(doc, "spacing");
-        let tree = doc.tree_mut(self.part);
-        tree.set_attr(sp, line_attr, line);
-        tree.set_attr(sp, rule_attr, rule);
+        let ppr = self.ensure_ppr(doc);
+        set_line_spacing_in(doc, self.part, ppr, spacing);
         *self
     }
 
@@ -928,10 +945,8 @@ impl Paragraph {
 
     /// Set a twentieths-of-a-point `w:spacing` attribute, creating `w:spacing` if needed.
     fn set_spacing_pt(&self, doc: &mut Document, attr_local: &str, space: Pt) {
-        let attr = doc.qn(self.part, attr_local);
-        let sp = self.ensure_ppr_child(doc, "spacing");
-        doc.tree_mut(self.part)
-            .set_attr(sp, attr, space.to_twentieths_string());
+        let ppr = self.ensure_ppr(doc);
+        set_spacing_pt_in(doc, self.part, ppr, attr_local, space);
     }
 
     /// Read the first present of `attr_locals` on `w:ind` as a [`Length`].
@@ -1125,29 +1140,90 @@ impl Paragraph {
     }
 
     /// A direct `w:pPr` child with the given local name, creating it (in canonical
-    /// schema order) if absent. Creates `w:pPr` first if needed.
+    /// schema order) if absent. Creates `w:pPr` first if needed. Thin wrapper over the
+    /// part-agnostic [`ensure_ppr_child_in`] that ensures the paragraph's own `w:pPr`.
     fn ensure_ppr_child(&self, doc: &mut Document, local: &str) -> NodeId {
         let ppr = self.ensure_ppr(doc);
-        if let Some(existing) = {
-            let tree = doc.tree(self.part);
-            tree.children(ppr)
-                .iter()
-                .copied()
-                .find(|&c| is_wml_element(tree, c, local))
-        } {
-            return existing;
-        }
-        let name = doc.qn(self.part, local);
-        let index = ordered_insert_index(
-            doc.tree(self.part),
-            ppr,
-            rank_in(PPR_ORDER, local),
-            PPR_ORDER,
-        );
-        let el = doc.tree_mut(self.part).create_element(name);
-        doc.tree_mut(self.part).insert_child(ppr, index, el);
-        el
+        ensure_ppr_child_in(doc, self.part, ppr, local)
     }
+}
+
+// --- Reusable `w:pPr` property writers ---------------------------------------------
+//
+// Like the `w:rPr` writers in [`run`](super::run), these operate on any `(part, w:pPr)`
+// pair so both [`Paragraph`] and a paragraph-type [`Style`](super::Style) share one
+// implementation. Only the placement of the `w:pPr` within its parent differs (a paragraph
+// puts it first; a style slots it in `CT_Style` order), so each caller ensures its own
+// `w:pPr` and passes the node id here.
+
+/// A direct `w:pPr` child element with WML local name `local`, if present.
+pub(super) fn ppr_child_in(tree: &XmlTree, ppr: NodeId, local: &str) -> Option<NodeId> {
+    tree.children(ppr)
+        .iter()
+        .copied()
+        .find(|&c| is_wml_element(tree, c, local))
+}
+
+/// Ensure a direct `w:pPr` child `local` exists, inserted in canonical `CT_PPr` order
+/// ([`PPR_ORDER`]); return it. `ppr` is a `w:pPr` element living in `part`.
+pub(super) fn ensure_ppr_child_in(
+    doc: &mut Document,
+    part: PartId,
+    ppr: NodeId,
+    local: &str,
+) -> NodeId {
+    if let Some(existing) = ppr_child_in(doc.tree(part), ppr, local) {
+        return existing;
+    }
+    let name = doc.qn(part, local);
+    let index = ordered_insert_index(doc.tree(part), ppr, rank_in(PPR_ORDER, local), PPR_ORDER);
+    let el = doc.tree_mut(part).create_element(name);
+    doc.tree_mut(part).insert_child(ppr, index, el);
+    el
+}
+
+/// Set the alignment on `ppr` (`w:jc`).
+pub(super) fn set_alignment_in(
+    doc: &mut Document,
+    part: PartId,
+    ppr: NodeId,
+    alignment: Alignment,
+) {
+    let val = doc.qn(part, "val");
+    let jc = ensure_ppr_child_in(doc, part, ppr, "jc");
+    doc.tree_mut(part).set_attr(jc, val, alignment.to_val());
+}
+
+/// Set a twentieths-of-a-point `w:spacing` attribute (`before`/`after`) on `ppr`, leaving
+/// the other spacing attributes intact.
+pub(super) fn set_spacing_pt_in(
+    doc: &mut Document,
+    part: PartId,
+    ppr: NodeId,
+    attr_local: &str,
+    space: Pt,
+) {
+    let attr = doc.qn(part, attr_local);
+    let sp = ensure_ppr_child_in(doc, part, ppr, "spacing");
+    doc.tree_mut(part)
+        .set_attr(sp, attr, space.to_twentieths_string());
+}
+
+/// Set the line spacing on `ppr` (`w:spacing` `w:line` + `w:lineRule`), leaving any
+/// `w:before`/`w:after` intact.
+pub(super) fn set_line_spacing_in(
+    doc: &mut Document,
+    part: PartId,
+    ppr: NodeId,
+    spacing: LineSpacing,
+) {
+    let (line, rule) = spacing.to_line_and_rule();
+    let line_attr = doc.qn(part, "line");
+    let rule_attr = doc.qn(part, "lineRule");
+    let sp = ensure_ppr_child_in(doc, part, ppr, "spacing");
+    let tree = doc.tree_mut(part);
+    tree.set_attr(sp, line_attr, line);
+    tree.set_attr(sp, rule_attr, rule);
 }
 
 /// Read `(numId, ilvl)` out of a `w:numPr` element (`val_name` is the part's `w:val`

@@ -2,10 +2,13 @@
 
 **Create and edit `.docx` files in Rust — a [python-docx](https://python-docx.readthedocs.io/) for Rust.**
 
-> **Status: functional, pre-1.0.** Open, create, edit, and save real documents with full
-> round-trip fidelity: paragraphs, runs, character/paragraph formatting, tables, sections,
-> headers/footers, and inline images all work (see the roadmap below). The API may change
-> between minor versions until 1.0.
+> **Status: functional, pre-1.0 — full python-docx-parity coverage of the measured
+> production feature set.** Every queued milestone is complete: open, create, edit, and save
+> real documents with full round-trip fidelity — paragraphs, runs, character/paragraph
+> formatting, tables, sections, headers/footers, inline images, numbering/lists, hyperlinks,
+> line numbering/frames/hidden text, and styles (catalog read, authoring, `docDefaults`, and
+> style-aware effective formatting reads) all work (see the roadmap below). The API may
+> change between minor versions until 1.0.
 
 ## Why another docx crate?
 
@@ -62,7 +65,7 @@ doc.save("contract-signed.docx")?;
 - [x] Table column widths, merge creation, grid-based cell addressing (`set_column_widths`/`Cell::width`/`set_fixed_layout`, grid-based `Table::cell`, `Table::merge`)
 - [x] Hyperlinks (read `hyperlinks()`; `add_hyperlink`/`add_anchor_hyperlink` with External relationship creation, `add_bookmark`)
 - [x] Section line numbering, paragraph frames/borders, hidden text (`Section::set_line_numbering` with `LineNumbering`/`LineNumberRestart`, `Paragraph::suppress_line_numbers`, `Paragraph::set_frame`/`set_borders` with `FrameOptions`/`BorderEdge`, `Run::set_vanish`)
-- [ ] Styles authoring (styles.xml, docDefaults), style-aware formatting reads
+- [x] Styles authoring, `docDefaults`, style-aware formatting reads (`Style`/`StyleType` catalog via `Document::styles`/`style_by_id`/`style_by_name`, `create_style` with `set_based_on`/`set_next` and reused bold/size/color/font/alignment/spacing setters, `Paragraph::style_name`, `Run::set_style_id`, `Document::set_default_font`, and `Run::effective_bold`/`effective_italic`/`effective_size`/`effective_font`)
 
 ## License
 

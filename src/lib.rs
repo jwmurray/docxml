@@ -1,7 +1,8 @@
 //! Create and edit `.docx` files — a [python-docx](https://python-docx.readthedocs.io/)
 //! for Rust.
 //!
-//! **Status: functional, pre-1.0.** The OPC packaging layer, the lossless XML tree, a
+//! **Status: functional, pre-1.0 — full python-docx-parity coverage of the measured
+//! production feature set (every milestone complete).** The OPC packaging layer, the lossless XML tree, a
 //! typed document API ([`Document`], [`Paragraph`], [`Run`]), character/paragraph
 //! formatting (bold, italic, underline, size, color, font, small-caps/all-caps, alignment,
 //! line spacing, space before/after, indents, tab stops, keep-together/keep-with-next/
@@ -27,7 +28,15 @@
 //! `Section::set_line_numbering` for `w:lnNumType` pleading-paper numbering, and
 //! `Paragraph::suppress_line_numbers`; [`FrameOptions`] / [`FrameAnchor`] / [`FrameWrap`] —
 //! `Paragraph::set_frame` for `w:framePr`; [`BorderEdge`] / [`BorderStyle`] —
-//! `Paragraph::set_borders` for `w:pBdr`; and `Run::set_vanish` for `w:vanish` hidden text)
+//! `Paragraph::set_borders` for `w:pBdr`; and `Run::set_vanish` for `w:vanish` hidden text),
+//! and styles ([`Style`] / [`StyleType`] — the `word/styles.xml` catalog via
+//! [`Document::styles`], [`style_by_id`](Document::style_by_id), and
+//! [`style_by_name`](Document::style_by_name); [`Document::create_style`] authoring with
+//! `set_based_on`/`set_next` and bold/size/color/font/alignment/spacing setters (reusing the
+//! run and paragraph writers); [`Paragraph::style_name`] and [`Run::set_style_id`];
+//! [`Document::set_default_font`] writing `w:docDefaults`; and the style-aware effective
+//! reads [`Run::effective_bold`], `effective_italic`, `effective_size`, and `effective_font`
+//! that resolve through the `w:rStyle`/`w:pStyle` `w:basedOn` chains and `w:docDefaults`)
 //! are implemented. See the
 //! [repository](https://github.com/jwmurray/docxml) for the architecture and roadmap.
 //!
@@ -59,6 +68,6 @@ pub use api::{
     Alignment, BorderEdge, BorderStyle, BreakType, Cell, Document, FrameAnchor, FrameOptions,
     FrameWrap, HeaderFooter, HeaderFooterType, HyperlinkInfo, Length, LineNumberRestart,
     LineNumbering, LineSpacing, NumberFormat, Paragraph, Picture, Pt, RgbColor, Row, Run, Section,
-    TabAlignment, TabLeader, Table, VMerge,
+    Style, StyleType, TabAlignment, TabLeader, Table, VMerge,
 };
 pub use error::{Error, Result};
