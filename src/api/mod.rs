@@ -27,11 +27,13 @@
 mod document;
 mod paragraph;
 mod run;
+mod table;
 mod units;
 
 pub use document::Document;
 pub use paragraph::Paragraph;
 pub use run::Run;
+pub use table::{Cell, Row, Table, VMerge};
 pub use units::{Alignment, Pt, RgbColor};
 
 use crate::xml::{NodeId, XmlTree};

@@ -36,6 +36,13 @@ for para in doc.paragraphs() {
 let p = doc.add_paragraph("Signed and agreed:");
 p.add_run(&mut doc, "John Murray").bold(&mut doc, true);
 
+let table = doc.add_table(2, 2);
+for (r, row) in table.rows(&doc).into_iter().enumerate() {
+    for (c, cell) in row.cells(&doc).into_iter().enumerate() {
+        cell.set_text(&mut doc, &format!("r{r}c{c}"));
+    }
+}
+
 doc.save("contract-signed.docx")?;
 ```
 
@@ -45,7 +52,8 @@ doc.save("contract-signed.docx")?;
 - [x] Lossless mutable XML tree with semantic round-trip tests against real-world documents
 - [x] `Document` / `Paragraph` / `Run` — text read/edit, bold/italic, embedded blank template (create)
 - [x] Character/paragraph formatting (underline, size, color, font, alignment, styles read)
-- [ ] Tables, sections, headers/footers
+- [x] Tables (read rows/cells/text, merge awareness, create, `add_row`, cell `set_text`)
+- [ ] Sections, headers/footers
 - [ ] Images
 - [ ] Styles (read + pass-through first, authoring later)
 
