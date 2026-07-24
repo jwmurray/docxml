@@ -127,7 +127,13 @@ Kept deliberately minimal: `zip`, `quick-xml`, `thiserror`. Dev: `tempfile`.
 5. [x] Tables (PR #8)
 6. [x] Sections, headers/footers (PR #9)
 7. [x] Images (inline pictures, EMU geometry) (PR #10)
-8. [ ] Styles authoring, numbering — post-1.0 candidates
+8. [x] Paragraph formatting (spacing/indent/line-spacing/tabs), breaks, field codes (PAGE/TOC) (PR #11)
+9. [ ] Numbering / lists (numbering.xml authoring; List Bullet / List Number)
+10. [ ] Header/footer part creation; first/even-page headers
+11. [ ] Table column widths, merge creation, grid-based cell addressing
+12. [ ] Hyperlinks (write API with relationship creation)
+13. [ ] Section line numbering (w:lnNumType), paragraph frames (w:framePr, w:pBdr), hidden text (w:vanish)
+14. [ ] Styles authoring (styles.xml, docDefaults), style-aware formatting reads
 
 Versioning: 0.x during the milestone sequence; API may break between minors until 1.0.
 

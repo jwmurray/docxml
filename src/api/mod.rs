@@ -25,6 +25,7 @@
 //! ```
 
 mod document;
+mod field;
 mod header;
 mod paragraph;
 mod picture;
@@ -40,7 +41,7 @@ pub use picture::Picture;
 pub use run::Run;
 pub use section::Section;
 pub use table::{Cell, Row, Table, VMerge};
-pub use units::{Alignment, Length, Pt, RgbColor};
+pub use units::{Alignment, BreakType, Length, LineSpacing, Pt, RgbColor, TabAlignment, TabLeader};
 
 use crate::xml::{NodeId, XmlTree};
 

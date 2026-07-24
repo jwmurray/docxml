@@ -128,6 +128,191 @@ impl Pt {
     pub(crate) fn from_half_points_str(val: &str) -> Option<Pt> {
         val.trim().parse::<f64>().ok().map(|hp| Pt(hp / 2.0))
     }
+
+    /// This size as a twentieths-of-a-point string (the unit of `w:spacing/@w:before`,
+    /// `@w:after`, and exact/at-least line values), rounded to the nearest twentieth.
+    pub(crate) fn to_twentieths_string(self) -> String {
+        ((self.0 * 20.0).round() as i64).to_string()
+    }
+
+    /// Parse a twentieths-of-a-point value (integer or decimal) back into points. Returns
+    /// `None` when the value is not a number.
+    pub(crate) fn from_twentieths_str(val: &str) -> Option<Pt> {
+        val.trim().parse::<f64>().ok().map(|t| Pt(t / 20.0))
+    }
+}
+
+/// Paragraph line spacing (`w:spacing/@w:line` + `@w:lineRule`).
+///
+/// The three named multiples and [`Multiple`](LineSpacing::Multiple) are *auto* multiples
+/// of a line, expressed in 240ths of a line (`w:lineRule="auto"`): [`Single`] is `240`,
+/// [`OnePointFive`] is `360`, [`Double`] is `480`, and `Multiple(x)` is `round(240 * x)`.
+/// [`Exactly`](LineSpacing::Exactly) and [`AtLeast`](LineSpacing::AtLeast) pin an absolute
+/// line height in points, stored in twentieths of a point with `w:lineRule="exact"` /
+/// `"atLeast"` respectively — matching python-docx's `WD_LINE_SPACING` semantics.
+///
+/// Reading is tolerant: an `"auto"` rule (or a missing rule alongside a `w:line` value) is
+/// read as the corresponding multiple, with the three round values recovered as their named
+/// variants (`480` → [`Double`], not `Multiple(2.0)`).
+///
+/// [`Single`]: LineSpacing::Single
+/// [`OnePointFive`]: LineSpacing::OnePointFive
+/// [`Double`]: LineSpacing::Double
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum LineSpacing {
+    /// Single spacing (`w:line="240" w:lineRule="auto"`).
+    Single,
+    /// One-and-a-half spacing (`w:line="360" w:lineRule="auto"`).
+    OnePointFive,
+    /// Double spacing (`w:line="480" w:lineRule="auto"`).
+    Double,
+    /// An arbitrary multiple of single spacing (`w:line="round(240 * x)" w:lineRule="auto"`).
+    Multiple(f64),
+    /// An exact line height in points (`w:lineRule="exact"`).
+    Exactly(Pt),
+    /// A minimum line height in points (`w:lineRule="atLeast"`).
+    AtLeast(Pt),
+}
+
+impl LineSpacing {
+    /// This spacing as the `(w:line value, w:lineRule value)` pair to write.
+    pub(crate) fn to_line_and_rule(self) -> (String, &'static str) {
+        match self {
+            LineSpacing::Single => ("240".to_string(), "auto"),
+            LineSpacing::OnePointFive => ("360".to_string(), "auto"),
+            LineSpacing::Double => ("480".to_string(), "auto"),
+            LineSpacing::Multiple(x) => (((x * 240.0).round() as i64).to_string(), "auto"),
+            LineSpacing::Exactly(pt) => (pt.to_twentieths_string(), "exact"),
+            LineSpacing::AtLeast(pt) => (pt.to_twentieths_string(), "atLeast"),
+        }
+    }
+
+    /// Parse a `(w:line, w:lineRule)` pair. `line` must be an integer; the rule selects the
+    /// interpretation (`"exact"`/`"atLeast"` are absolute point heights, `"auto"` or a
+    /// missing rule is an auto multiple). Returns `None` when `line` is not an integer or
+    /// the rule is present but unrecognized.
+    pub(crate) fn from_line_and_rule(line: &str, rule: Option<&str>) -> Option<LineSpacing> {
+        let n: i64 = line.trim().parse().ok()?;
+        match rule.map(str::trim) {
+            Some("exact") => Some(LineSpacing::Exactly(Pt(n as f64 / 20.0))),
+            Some("atLeast") => Some(LineSpacing::AtLeast(Pt(n as f64 / 20.0))),
+            Some("auto") | None => Some(match n {
+                240 => LineSpacing::Single,
+                360 => LineSpacing::OnePointFive,
+                480 => LineSpacing::Double,
+                _ => LineSpacing::Multiple(n as f64 / 240.0),
+            }),
+            _ => None,
+        }
+    }
+}
+
+/// A tab-stop alignment (`w:tab/@w:val`).
+///
+/// Maps to `left` / `center` / `right` / `decimal`. Reading also accepts the strict aliases
+/// `start` (→ [`Left`](TabAlignment::Left)) and `end` (→ [`Right`](TabAlignment::Right));
+/// other values (`bar`, `num`, `clear`, …) are not modeled and read as `None`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TabAlignment {
+    /// Left-aligned tab (`w:val="left"`).
+    Left,
+    /// Centered tab (`w:val="center"`).
+    Center,
+    /// Right-aligned tab (`w:val="right"`).
+    Right,
+    /// Decimal-aligned tab (`w:val="decimal"`).
+    Decimal,
+}
+
+impl TabAlignment {
+    /// This alignment as a `w:tab` `w:val` string.
+    pub(crate) fn to_val(self) -> &'static str {
+        match self {
+            TabAlignment::Left => "left",
+            TabAlignment::Center => "center",
+            TabAlignment::Right => "right",
+            TabAlignment::Decimal => "decimal",
+        }
+    }
+
+    /// Parse a `w:tab` `w:val`. Recognizes `left`/`center`/`right`/`decimal` plus the
+    /// strict aliases `start`→`Left` and `end`→`Right`; anything else is `None`.
+    pub(crate) fn from_val(val: &str) -> Option<TabAlignment> {
+        match val.trim() {
+            "left" | "start" => Some(TabAlignment::Left),
+            "center" => Some(TabAlignment::Center),
+            "right" | "end" => Some(TabAlignment::Right),
+            "decimal" => Some(TabAlignment::Decimal),
+            _ => None,
+        }
+    }
+}
+
+/// A tab-stop leader — the character drawn to fill the space a tab spans (`w:tab/@w:leader`).
+///
+/// [`None`](TabLeader::None) means no leader; the attribute is omitted entirely when writing
+/// it and a `w:leader="none"` (or a missing attribute) reads back as `None`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TabLeader {
+    /// No leader (`w:leader` omitted, or `"none"`).
+    None,
+    /// A dotted leader (`w:leader="dot"`) — the common "table of contents" dots.
+    Dots,
+    /// A dashed leader (`w:leader="hyphen"`).
+    Dashes,
+    /// A solid underline leader (`w:leader="underscore"`).
+    Underscore,
+}
+
+impl TabLeader {
+    /// This leader as a `w:tab` `w:leader` string, or `None` for [`TabLeader::None`] (whose
+    /// caller omits the attribute rather than writing `"none"`).
+    pub(crate) fn to_val(self) -> Option<&'static str> {
+        match self {
+            TabLeader::None => Option::None,
+            TabLeader::Dots => Some("dot"),
+            TabLeader::Dashes => Some("hyphen"),
+            TabLeader::Underscore => Some("underscore"),
+        }
+    }
+
+    /// Parse a `w:tab` `w:leader`. `dot`→`Dots`, `hyphen`→`Dashes`, `underscore`→
+    /// `Underscore`, and `none` (or anything unrecognized) → [`TabLeader::None`].
+    pub(crate) fn from_val(val: &str) -> TabLeader {
+        match val.trim() {
+            "dot" => TabLeader::Dots,
+            "hyphen" => TabLeader::Dashes,
+            "underscore" => TabLeader::Underscore,
+            _ => TabLeader::None,
+        }
+    }
+}
+
+/// A run-level break (`w:br`) kind.
+///
+/// [`Page`](BreakType::Page) and [`Column`](BreakType::Column) write `w:br w:type="page"` /
+/// `"column"`; [`Line`](BreakType::Line) is a bare `w:br` (the default type). All three read
+/// back as a newline in [`Run::text`](crate::Run::text) / [`Paragraph::text`](crate::Paragraph::text).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BreakType {
+    /// A page break (`w:br w:type="page"`).
+    Page,
+    /// A column break (`w:br w:type="column"`).
+    Column,
+    /// A line break (a bare `w:br`, i.e. the default `textWrapping` type).
+    Line,
+}
+
+impl BreakType {
+    /// The `w:type` attribute value to write, or `None` for a bare `w:br`
+    /// ([`Line`](BreakType::Line), the default type).
+    pub(crate) fn type_val(self) -> Option<&'static str> {
+        match self {
+            BreakType::Page => Some("page"),
+            BreakType::Column => Some("column"),
+            BreakType::Line => None,
+        }
+    }
 }
 
 /// An sRGB color (`w:color`), three 8-bit channels.

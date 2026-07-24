@@ -3,8 +3,8 @@
 use crate::xml::{NodeId, XmlTree};
 
 use super::{
-    Alignment, Document, PartId, Run, is_wml_element, needs_space_preserve, ordered_insert_index,
-    rank_in,
+    Alignment, Document, Length, LineSpacing, PartId, Pt, Run, TabAlignment, TabLeader,
+    is_wml_element, needs_space_preserve, ordered_insert_index, rank_in,
 };
 
 /// Canonical `w:pPr` child order (ECMA-376 §17.3.1.26, `CT_PPr` sequence), local names
@@ -73,6 +73,11 @@ impl Paragraph {
     /// The paragraph's underlying tree node id.
     pub fn node(&self) -> NodeId {
         self.node
+    }
+
+    /// The part this paragraph lives in (used by field-code construction).
+    pub(crate) fn part(&self) -> PartId {
+        self.part
     }
 
     /// The paragraph's visible text: its runs' text concatenated.
@@ -178,6 +183,311 @@ impl Paragraph {
         let pstyle = self.ensure_ppr_child(doc, "pStyle");
         doc.tree_mut(self.part).set_attr(pstyle, val, style_id);
         *self
+    }
+
+    /// The paragraph's line spacing (`w:pPr/w:spacing`), if set.
+    ///
+    /// Reads `w:line` together with `w:lineRule` and maps them to a [`LineSpacing`]
+    /// (see that type for the auto-multiple vs. exact/at-least rules). A missing
+    /// `w:lineRule` alongside a `w:line` value is read as an auto multiple.
+    pub fn line_spacing(&self, doc: &Document) -> Option<LineSpacing> {
+        let tree = doc.tree(self.part);
+        let sp = self.ppr_child(tree, "spacing")?;
+        let line = tree.attr(sp, &doc.qn(self.part, "line"))?;
+        let rule = tree.attr(sp, &doc.qn(self.part, "lineRule"));
+        LineSpacing::from_line_and_rule(line, rule)
+    }
+
+    /// Set the paragraph line spacing (`w:pPr/w:spacing` `w:line` + `w:lineRule`).
+    ///
+    /// `w:spacing` is a single element shared with [`space_before`](Self::space_before) and
+    /// [`space_after`](Self::space_after); this touches only `w:line` and `w:lineRule`,
+    /// leaving any `w:before` / `w:after` intact.
+    pub fn set_line_spacing(&self, doc: &mut Document, spacing: LineSpacing) -> Paragraph {
+        let (line, rule) = spacing.to_line_and_rule();
+        let line_attr = doc.qn(self.part, "line");
+        let rule_attr = doc.qn(self.part, "lineRule");
+        let sp = self.ensure_ppr_child(doc, "spacing");
+        let tree = doc.tree_mut(self.part);
+        tree.set_attr(sp, line_attr, line);
+        tree.set_attr(sp, rule_attr, rule);
+        *self
+    }
+
+    /// The space above the paragraph (`w:pPr/w:spacing/@w:before`), if set.
+    pub fn space_before(&self, doc: &Document) -> Option<Pt> {
+        self.read_spacing_pt(doc, "before")
+    }
+
+    /// The space below the paragraph (`w:pPr/w:spacing/@w:after`), if set.
+    pub fn space_after(&self, doc: &Document) -> Option<Pt> {
+        self.read_spacing_pt(doc, "after")
+    }
+
+    /// Set the space above the paragraph (`w:pPr/w:spacing/@w:before`, in twentieths of a
+    /// point). Preserves the other `w:spacing` attributes (`line`, `lineRule`, `after`).
+    pub fn set_space_before(&self, doc: &mut Document, space: Pt) -> Paragraph {
+        self.set_spacing_pt(doc, "before", space);
+        *self
+    }
+
+    /// Set the space below the paragraph (`w:pPr/w:spacing/@w:after`, in twentieths of a
+    /// point). Preserves the other `w:spacing` attributes (`line`, `lineRule`, `before`).
+    pub fn set_space_after(&self, doc: &mut Document, space: Pt) -> Paragraph {
+        self.set_spacing_pt(doc, "after", space);
+        *self
+    }
+
+    /// The paragraph's left indent (`w:pPr/w:ind`), if set. Reads the transitional
+    /// `w:left` and the strict `w:start` spelling.
+    pub fn left_indent(&self, doc: &Document) -> Option<Length> {
+        self.read_ind(doc, &["left", "start"])
+    }
+
+    /// The paragraph's right indent (`w:pPr/w:ind`), if set. Reads the transitional
+    /// `w:right` and the strict `w:end` spelling.
+    pub fn right_indent(&self, doc: &Document) -> Option<Length> {
+        self.read_ind(doc, &["right", "end"])
+    }
+
+    /// The paragraph's first-line indent (`w:pPr/w:ind`), if set.
+    ///
+    /// A `w:firstLine` reads as its positive value; a `w:hanging` reads as the negative of
+    /// its (positive) value — python-docx's convention, where a hanging indent is a
+    /// negative first-line indent. `w:hanging` takes precedence when both are present.
+    pub fn first_line_indent(&self, doc: &Document) -> Option<Length> {
+        let tree = doc.tree(self.part);
+        let ind = self.ppr_child(tree, "ind")?;
+        if let Some(hanging) = tree
+            .attr(ind, &doc.qn(self.part, "hanging"))
+            .and_then(Length::from_twips_str)
+        {
+            return Some(Length::from_twips(-hanging.twips()));
+        }
+        tree.attr(ind, &doc.qn(self.part, "firstLine"))
+            .and_then(Length::from_twips_str)
+    }
+
+    /// Set the left indent (`w:pPr/w:ind/@w:left`), creating `w:ind` if needed.
+    pub fn set_left_indent(&self, doc: &mut Document, indent: Length) -> Paragraph {
+        self.set_ind(doc, "left", indent);
+        *self
+    }
+
+    /// Set the right indent (`w:pPr/w:ind/@w:right`), creating `w:ind` if needed.
+    pub fn set_right_indent(&self, doc: &mut Document, indent: Length) -> Paragraph {
+        self.set_ind(doc, "right", indent);
+        *self
+    }
+
+    /// Set the first-line indent (`w:pPr/w:ind`), creating `w:ind` if needed.
+    ///
+    /// A non-negative `indent` writes `w:firstLine`; a negative one writes `w:hanging` with
+    /// the magnitude (python-docx's convention). Whichever of the two is not used is
+    /// removed, so a paragraph never carries both spellings at once.
+    pub fn set_first_line_indent(&self, doc: &mut Document, indent: Length) -> Paragraph {
+        let first_attr = doc.qn(self.part, "firstLine");
+        let hanging_attr = doc.qn(self.part, "hanging");
+        let ind = self.ensure_ppr_child(doc, "ind");
+        let twips = indent.twips();
+        let tree = doc.tree_mut(self.part);
+        if twips < 0 {
+            tree.remove_attr(ind, &first_attr);
+            tree.set_attr(ind, hanging_attr, (-twips).to_string());
+        } else {
+            tree.remove_attr(ind, &hanging_attr);
+            tree.set_attr(ind, first_attr, twips.to_string());
+        }
+        *self
+    }
+
+    /// Whether the paragraph's lines are kept together on one page (`w:pPr/w:keepLines`).
+    pub fn keep_together(&self, doc: &Document) -> bool {
+        self.ppr_toggle(doc, "keepLines")
+    }
+
+    /// Set whether the paragraph's lines are kept together (`w:pPr/w:keepLines`).
+    pub fn set_keep_together(&self, doc: &mut Document, on: bool) -> Paragraph {
+        self.set_ppr_toggle(doc, "keepLines", on);
+        *self
+    }
+
+    /// Whether the paragraph is kept on the same page as the next (`w:pPr/w:keepNext`).
+    pub fn keep_with_next(&self, doc: &Document) -> bool {
+        self.ppr_toggle(doc, "keepNext")
+    }
+
+    /// Set whether the paragraph is kept with the next (`w:pPr/w:keepNext`).
+    pub fn set_keep_with_next(&self, doc: &mut Document, on: bool) -> Paragraph {
+        self.set_ppr_toggle(doc, "keepNext", on);
+        *self
+    }
+
+    /// Whether a page break is forced before the paragraph (`w:pPr/w:pageBreakBefore`).
+    pub fn page_break_before(&self, doc: &Document) -> bool {
+        self.ppr_toggle(doc, "pageBreakBefore")
+    }
+
+    /// Set whether a page break is forced before the paragraph (`w:pPr/w:pageBreakBefore`).
+    pub fn set_page_break_before(&self, doc: &mut Document, on: bool) -> Paragraph {
+        self.set_ppr_toggle(doc, "pageBreakBefore", on);
+        *self
+    }
+
+    /// The paragraph's tab stops (`w:pPr/w:tabs`), in document order.
+    ///
+    /// Each entry is the stop's position, alignment, and leader. A `w:tab` with an
+    /// unrecognized `w:val` defaults to [`TabAlignment::Left`]; a missing or `"none"`
+    /// leader is [`TabLeader::None`]; a `w:tab` without a parsable `w:pos` (e.g. a
+    /// `w:val="clear"` stop) is skipped.
+    pub fn tab_stops(&self, doc: &Document) -> Vec<(Length, TabAlignment, TabLeader)> {
+        let tree = doc.tree(self.part);
+        let Some(tabs) = self.ppr_child(tree, "tabs") else {
+            return Vec::new();
+        };
+        let pos_attr = doc.qn(self.part, "pos");
+        let val_attr = doc.qn(self.part, "val");
+        let leader_attr = doc.qn(self.part, "leader");
+        tree.children(tabs)
+            .iter()
+            .copied()
+            .filter(|&c| is_wml_element(tree, c, "tab"))
+            .filter_map(|c| {
+                let pos = tree.attr(c, &pos_attr).and_then(Length::from_twips_str)?;
+                let align = tree
+                    .attr(c, &val_attr)
+                    .and_then(TabAlignment::from_val)
+                    .unwrap_or(TabAlignment::Left);
+                let leader = tree
+                    .attr(c, &leader_attr)
+                    .map(TabLeader::from_val)
+                    .unwrap_or(TabLeader::None);
+                Some((pos, align, leader))
+            })
+            .collect()
+    }
+
+    /// Add a tab stop (`w:pPr/w:tabs/w:tab`), creating `w:tabs` if needed.
+    ///
+    /// The new `w:tab` carries `w:pos` (in twips), `w:val` (alignment), and `w:leader`
+    /// (omitted for [`TabLeader::None`]). Stops are kept sorted ascending by position — the
+    /// new one is inserted before the first existing stop that sits farther right — matching
+    /// python-docx's position-ordered `TabStops`.
+    pub fn add_tab_stop(
+        &self,
+        doc: &mut Document,
+        pos: Length,
+        alignment: TabAlignment,
+        leader: TabLeader,
+    ) {
+        let val_attr = doc.qn(self.part, "val");
+        let pos_attr = doc.qn(self.part, "pos");
+        let leader_attr = doc.qn(self.part, "leader");
+        let tab_name = doc.qn(self.part, "tab");
+        let tabs = self.ensure_ppr_child(doc, "tabs");
+
+        // Insert before the first existing stop positioned farther right (ascending order).
+        let pos_twips = pos.twips();
+        let index = {
+            let tree = doc.tree(self.part);
+            tree.children(tabs)
+                .iter()
+                .position(|&c| {
+                    is_wml_element(tree, c, "tab")
+                        && tree
+                            .attr(c, &pos_attr)
+                            .and_then(Length::from_twips_str)
+                            .is_some_and(|l| l.twips() > pos_twips)
+                })
+                .unwrap_or_else(|| tree.children(tabs).len())
+        };
+
+        let tab = doc.tree_mut(self.part).create_element(tab_name);
+        // Schema order of CT_TabStop attributes: val, leader, pos.
+        doc.tree_mut(self.part)
+            .set_attr(tab, val_attr, alignment.to_val());
+        if let Some(l) = leader.to_val() {
+            doc.tree_mut(self.part).set_attr(tab, leader_attr, l);
+        }
+        doc.tree_mut(self.part)
+            .set_attr(tab, pos_attr, pos.to_twips_string());
+        doc.tree_mut(self.part).insert_child(tabs, index, tab);
+    }
+
+    /// Remove all tab stops, deleting the `w:pPr/w:tabs` element.
+    ///
+    /// The whole `w:tabs` is removed rather than left empty: `CT_Tabs` requires at least one
+    /// `w:tab`, so an empty `w:tabs` would be schema-invalid. After this,
+    /// [`tab_stops`](Self::tab_stops) returns an empty vector.
+    pub fn clear_tab_stops(&self, doc: &mut Document) {
+        if let Some(tabs) = self.ppr_child(doc.tree(self.part), "tabs") {
+            doc.tree_mut(self.part).remove_from_parent(tabs);
+        }
+    }
+
+    /// Read a twentieths-of-a-point `w:spacing` attribute as [`Pt`].
+    fn read_spacing_pt(&self, doc: &Document, attr_local: &str) -> Option<Pt> {
+        let tree = doc.tree(self.part);
+        let sp = self.ppr_child(tree, "spacing")?;
+        Pt::from_twentieths_str(tree.attr(sp, &doc.qn(self.part, attr_local))?)
+    }
+
+    /// Set a twentieths-of-a-point `w:spacing` attribute, creating `w:spacing` if needed.
+    fn set_spacing_pt(&self, doc: &mut Document, attr_local: &str, space: Pt) {
+        let attr = doc.qn(self.part, attr_local);
+        let sp = self.ensure_ppr_child(doc, "spacing");
+        doc.tree_mut(self.part)
+            .set_attr(sp, attr, space.to_twentieths_string());
+    }
+
+    /// Read the first present of `attr_locals` on `w:ind` as a [`Length`].
+    fn read_ind(&self, doc: &Document, attr_locals: &[&str]) -> Option<Length> {
+        let tree = doc.tree(self.part);
+        let ind = self.ppr_child(tree, "ind")?;
+        for local in attr_locals {
+            if let Some(v) = tree.attr(ind, &doc.qn(self.part, local)) {
+                return Length::from_twips_str(v);
+            }
+        }
+        None
+    }
+
+    /// Set a twips-valued `w:ind` attribute, creating `w:ind` if needed.
+    fn set_ind(&self, doc: &mut Document, attr_local: &str, indent: Length) {
+        let attr = doc.qn(self.part, attr_local);
+        let ind = self.ensure_ppr_child(doc, "ind");
+        doc.tree_mut(self.part)
+            .set_attr(ind, attr, indent.to_twips_string());
+    }
+
+    /// Read an on/off `w:pPr` toggle child (`w:keepLines`, `w:keepNext`, …): present and not
+    /// `w:val="0"/"false"` is on.
+    fn ppr_toggle(&self, doc: &Document, local: &str) -> bool {
+        let tree = doc.tree(self.part);
+        let Some(el) = self.ppr_child(tree, local) else {
+            return false;
+        };
+        match tree.attr(el, &doc.qn(self.part, "val")) {
+            Some(v) => !matches!(v, "0" | "false"),
+            None => true,
+        }
+    }
+
+    /// Set or clear an on/off `w:pPr` toggle child. On ensures a bare element (clearing an
+    /// explicit `w:val="0"/"false"`); off removes it.
+    fn set_ppr_toggle(&self, doc: &mut Document, local: &str, on: bool) {
+        if on {
+            let el = self.ensure_ppr_child(doc, local);
+            let val = doc.qn(self.part, "val");
+            let tree = doc.tree_mut(self.part);
+            if let Some(v) = tree.attr(el, &val) {
+                if matches!(v, "0" | "false") {
+                    tree.remove_attr(el, &val);
+                }
+            }
+        } else if let Some(el) = self.ppr_child(doc.tree(self.part), local) {
+            doc.tree_mut(self.part).remove_from_parent(el);
+        }
     }
 
     /// The paragraph's direct `w:r` children as node ids.
