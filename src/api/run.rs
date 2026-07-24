@@ -4,8 +4,8 @@ use crate::xml::{NodeId, XmlTree};
 
 use super::paragraph::append_run_text;
 use super::{
-    Document, PartId, Pt, RgbColor, is_wml_element, needs_space_preserve, ordered_insert_index,
-    rank_in,
+    BreakType, Document, PartId, Pt, RgbColor, is_wml_element, needs_space_preserve,
+    ordered_insert_index, rank_in,
 };
 
 /// Canonical `w:rPr` child order (ECMA-376 §17.3.2.28, `CT_RPr` sequence), local names
@@ -253,6 +253,65 @@ impl Run {
         let el = self.ensure_rpr_child(doc, "rFonts");
         doc.tree_mut(self.part).set_attr(el, ascii, name);
         doc.tree_mut(self.part).set_attr(el, hansi, name);
+        *self
+    }
+
+    /// Whether the run is small-caps (`w:rPr/w:smallCaps`).
+    ///
+    /// Same toggle rule as [`is_bold`](Self::is_bold): present and not `w:val="0"/"false"`
+    /// is on. Direct properties only — see the [type docs](Self#direct-properties-only).
+    pub fn small_caps(&self, doc: &Document) -> bool {
+        self.has_toggle(doc, "smallCaps")
+    }
+
+    /// Turn small-caps on or off (`w:rPr/w:smallCaps`). On adds a bare `w:smallCaps`; off
+    /// removes it — the same representation as [`bold`](Self::bold).
+    pub fn set_small_caps(&self, doc: &mut Document, on: bool) -> Run {
+        self.set_toggle(doc, "smallCaps", on);
+        *self
+    }
+
+    /// Whether the run is all-caps (`w:rPr/w:caps`).
+    ///
+    /// Same toggle rule as [`is_bold`](Self::is_bold). Direct properties only — see the
+    /// [type docs](Self#direct-properties-only).
+    pub fn all_caps(&self, doc: &Document) -> bool {
+        self.has_toggle(doc, "caps")
+    }
+
+    /// Turn all-caps on or off (`w:rPr/w:caps`). On adds a bare `w:caps`; off removes it —
+    /// the same representation as [`bold`](Self::bold).
+    pub fn set_all_caps(&self, doc: &mut Document, on: bool) -> Run {
+        self.set_toggle(doc, "caps", on);
+        *self
+    }
+
+    /// Append a break (`w:br`) to the run.
+    ///
+    /// A [`BreakType::Page`] / [`BreakType::Column`] writes `w:br w:type="page"` /
+    /// `"column"`; [`BreakType::Line`] writes a bare `w:br`. The break is appended after the
+    /// run's existing content, and reads back as a newline in [`text`](Self::text).
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use docxml::{Document, BreakType};
+    ///
+    /// let mut doc = Document::new();
+    /// let p = doc.add_paragraph("");
+    /// let r = p.add_run(&mut doc, "line one");
+    /// r.add_break(&mut doc, BreakType::Line);
+    /// assert!(r.text(&doc).contains('\n'));
+    /// ```
+    pub fn add_break(&self, doc: &mut Document, kind: BreakType) -> Run {
+        let br_name = doc.qn(self.part, "br");
+        let type_attr = doc.qn(self.part, "type");
+        let tree = doc.tree_mut(self.part);
+        let br = tree.create_element(br_name);
+        tree.append_child(self.node, br);
+        if let Some(t) = kind.type_val() {
+            tree.set_attr(br, type_attr, t);
+        }
         *self
     }
 

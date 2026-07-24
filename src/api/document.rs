@@ -9,7 +9,9 @@ use crate::opc::{Package, parse_relationships};
 use crate::xml::XmlTree;
 
 use super::table::build_table;
-use super::{NodeId, Paragraph, PartId, Table, WML_MAIN_URIS, is_wml_element, split_qname};
+use super::{
+    BreakType, NodeId, Paragraph, PartId, Run, Table, WML_MAIN_URIS, is_wml_element, split_qname,
+};
 
 /// The `[Content_Types].xml` package part — itself an OPC part, parsed and edited through
 /// the same lazy per-part machinery as any WML part.
@@ -553,6 +555,32 @@ impl Document {
         };
         let para = self.add_paragraph(text);
         para.set_style_id(self, &style_id);
+        para
+    }
+
+    /// Append a paragraph whose single run carries a page break, returning the paragraph.
+    ///
+    /// Matches python-docx's `Document.add_page_break`: a fresh body paragraph containing
+    /// one run with a `w:br w:type="page"` (and no text). Like
+    /// [`add_paragraph`](Self::add_paragraph), it is inserted before a trailing `w:sectPr`.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use docxml::Document;
+    ///
+    /// let mut doc = Document::new();
+    /// let p = doc.add_page_break();
+    /// assert_eq!(p.runs(&doc).len(), 1);
+    /// assert_eq!(p.text(&doc), "\n");
+    /// ```
+    pub fn add_page_break(&mut self) -> Paragraph {
+        let para = self.add_paragraph("");
+        let r_name = self.qn(PartId::MAIN, "r");
+        let tree = self.tree_mut(PartId::MAIN);
+        let r = tree.create_element(r_name);
+        tree.append_child(para.node(), r);
+        Run::from_node(PartId::MAIN, r).add_break(self, BreakType::Page);
         para
     }
 }
