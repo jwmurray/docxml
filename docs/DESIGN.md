@@ -133,7 +133,10 @@ Kept deliberately minimal: `zip`, `quick-xml`, `thiserror`. Dev: `tempfile`.
 11. [x] Table column widths, merge creation, grid-based cell addressing (PR #15)
 12. [x] Hyperlinks (read + write API with relationship creation; bookmarks) (PR #16)
 13. [x] Section line numbering (w:lnNumType), paragraph frames (w:framePr, w:pBdr), hidden text (w:vanish) (PR #17)
-14. [ ] Styles authoring (styles.xml, docDefaults), style-aware formatting reads
+14. [x] Styles authoring (styles.xml, docDefaults), style-aware formatting reads (PR #18)
+
+All queued milestones are complete: the library now covers the measured production feature
+set at python-docx parity for creating and editing real documents.
 
 Versioning: 0.x during the milestone sequence; API may break between minors until 1.0.
 

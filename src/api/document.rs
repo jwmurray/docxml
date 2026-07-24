@@ -454,6 +454,17 @@ impl Document {
     /// raw bytes on demand (it is not one of the lazily cached WML parts), so this needs
     /// only `&self` — matching [`Paragraph::numbering`](crate::Paragraph::numbering)'s
     /// signature.
+    ///
+    /// # Two readers for `styles.xml`
+    ///
+    /// This `&self` helper parses the styles part from raw bytes because its caller
+    /// ([`Paragraph::numbering`](crate::Paragraph::numbering)) is `&self` and cannot ensure a
+    /// cached parse. The milestone-14 style API — [`Document::styles`](Self::styles), the
+    /// [`Style`](crate::Style) handles, and the effective-formatting reads — instead go
+    /// through the lazily *cached* parsed part ([`ensure_part`](Self::ensure_part)), since
+    /// those take `&mut self`. Both paths read the same content; this one is kept as-is
+    /// because migrating it would force `numbering()` to `&mut self` and break the existing
+    /// read API.
     pub(crate) fn style_numbering(&self, style_id: &str) -> Option<(u32, u32)> {
         let styles_name = self.part_by_rel_type(&STYLES_REL_TYPES)?;
         let raw = self.package.part(&styles_name)?;

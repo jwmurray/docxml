@@ -33,6 +33,7 @@ mod picture;
 mod run;
 mod section;
 mod settings;
+mod style;
 mod table;
 mod units;
 
@@ -43,6 +44,7 @@ pub use paragraph::{HyperlinkInfo, Paragraph};
 pub use picture::Picture;
 pub use run::Run;
 pub use section::Section;
+pub use style::{Style, StyleType};
 pub use table::{Cell, Row, Table, VMerge};
 pub use units::{
     Alignment, BorderEdge, BorderStyle, BreakType, FrameAnchor, FrameOptions, FrameWrap, Length,
