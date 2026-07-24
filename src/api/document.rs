@@ -229,6 +229,16 @@ impl Document {
         &self.parsed[PartId::MAIN.0 as usize].part_name
     }
 
+    /// The package part name of a parsed part (`word/document.xml`, `word/header1.xml`, …).
+    ///
+    /// Used by hyperlink authoring/reading, where a [`Paragraph`]'s
+    /// [`PartId`](super::PartId) must be turned into the source part name that keys its
+    /// part-level relationships — so a hyperlink in a header resolves against
+    /// `word/_rels/header1.xml.rels`, not the document's rels.
+    pub(crate) fn part_name(&self, part: PartId) -> &str {
+        &self.parsed[part.0 as usize].part_name
+    }
+
     /// Ensure the package part named `part_name` is parsed and cached, returning its
     /// [`PartId`]. A part already parsed (including the main part) returns its existing
     /// id; otherwise the raw part is parsed, appended, and its new id returned.
@@ -266,6 +276,20 @@ impl Document {
         let rels = self.relationships_of(source_part)?;
         let rel = rels.iter().find(|r| r.id == r_id)?;
         Some(resolve_part_path(source_part, &rel.target))
+    }
+
+    /// The verbatim `Target` of the relationship `r_id` declared by `source_part`, with no
+    /// path resolution.
+    ///
+    /// This is the hyperlink counterpart of [`resolve_rel_target`](Self::resolve_rel_target):
+    /// a hyperlink relationship is `TargetMode="External"` and its target is an absolute URL
+    /// (or `mailto:` / other URI), which must be returned exactly as written — running it
+    /// through the part-path normalizer (as [`resolve_rel_target`](Self::resolve_rel_target)
+    /// does for internal part targets) would corrupt it. Returns `None` when the rels part is
+    /// missing/unparsable or no relationship has that id.
+    pub(crate) fn rel_target_raw(&self, source_part: &str, r_id: &str) -> Option<String> {
+        let rels = self.relationships_of(source_part)?;
+        rels.iter().find(|r| r.id == r_id).map(|r| r.target.clone())
     }
 
     /// The relationships declared by `source_part`, preferring the in-memory parsed tree

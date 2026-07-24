@@ -2,10 +2,35 @@
 
 use crate::xml::{NodeId, XmlTree};
 
+use super::header::{rel_id_attr, rel_id_attr_name};
 use super::{
     Alignment, Document, Length, LineSpacing, PartId, Pt, Run, TabAlignment, TabLeader,
     is_wml_element, needs_space_preserve, ordered_insert_index, rank_in,
 };
+
+/// The relationship type of a hyperlink relationship (the transitional URI Word writes).
+/// A hyperlink to an external target is always `TargetMode="External"` with this type.
+const HYPERLINK_REL_TYPE: &str =
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink";
+
+/// A hyperlink read out of a paragraph — one `w:hyperlink` element and its resolved link.
+///
+/// A `w:hyperlink` is either *external* (an `r:id` pointing at a `TargetMode="External"`
+/// relationship, e.g. a web address) or *internal* (a `w:anchor` naming a bookmark in the
+/// same document); the two are mutually exclusive in practice. [`url`](Self::url) is the
+/// relationship target returned verbatim (see [`Paragraph::hyperlinks`]) and is `Some` only
+/// for an external link; [`anchor`](Self::anchor) is `Some` only for an internal one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HyperlinkInfo {
+    /// The external target URL, resolved from the hyperlink's `r:id` through the owning
+    /// part's relationships and returned verbatim (not path-resolved). `None` for an
+    /// anchor-only (internal) hyperlink or when the `r:id` does not resolve.
+    pub url: Option<String>,
+    /// The internal bookmark name from `w:anchor`, or `None` for an external hyperlink.
+    pub anchor: Option<String>,
+    /// The hyperlink's visible text: the concatenated text of the runs inside it.
+    pub text: String,
+}
 
 /// Canonical `w:pPr` child order (ECMA-376 §17.3.1.26, `CT_PPr` sequence), local names
 /// only. New properties are inserted to keep `w:pPr`'s children in this order so the
@@ -88,7 +113,10 @@ impl Paragraph {
     /// The paragraph's visible text: its runs' text concatenated.
     ///
     /// Within each run, `w:t` contributes its text, `w:tab` a tab, and `w:br` / `w:cr` a
-    /// newline — matching python-docx's `Paragraph.text`.
+    /// newline — matching python-docx's `Paragraph.text`. Text inside a `w:hyperlink` child
+    /// is included, in document order, so a paragraph with a hyperlink reads as the full
+    /// sentence (again matching python-docx, which walks hyperlink runs for `.text`). Runs
+    /// nested more deeply (inside a `w:smartTag`, `w:ins`, …) are not walked.
     ///
     /// # Examples
     ///
@@ -104,17 +132,179 @@ impl Paragraph {
     pub fn text(&self, doc: &Document) -> String {
         let tree = doc.tree(self.part);
         let mut out = String::new();
-        for run in self.run_nodes(tree) {
-            append_run_text(tree, run, &mut out);
+        for &child in tree.children(self.node) {
+            // Direct runs and the runs inside a direct-child hyperlink both contribute
+            // text; append_run_text walks descendant w:t/w:tab/w:br of either.
+            if is_wml_element(tree, child, "r") || is_wml_element(tree, child, "hyperlink") {
+                append_run_text(tree, child, &mut out);
+            }
         }
         out
     }
 
     /// The paragraph's runs, in order.
+    ///
+    /// These are the paragraph's *direct* `w:r` children only — matching python-docx's
+    /// `Paragraph.runs`. Runs nested inside a `w:hyperlink` are intentionally excluded here
+    /// (read them via [`hyperlinks`](Self::hyperlinks)); [`text`](Self::text), by contrast,
+    /// does include hyperlink text.
     pub fn runs(&self, doc: &Document) -> Vec<Run> {
         self.run_nodes(doc.tree(self.part))
             .map(|r| Run::from_node(self.part, r))
             .collect()
+    }
+
+    /// The paragraph's hyperlinks, in document order — every direct-child `w:hyperlink`.
+    ///
+    /// For each, [`text`](HyperlinkInfo::text) is the concatenated text of the runs inside
+    /// the hyperlink. An external hyperlink's `r:id` is resolved through *this paragraph's
+    /// own part's* relationships (so a hyperlink in a header resolves against
+    /// `word/_rels/headerN.xml.rels`, a body one against `word/_rels/document.xml.rels`) and
+    /// its `TargetMode="External"` target is returned verbatim in
+    /// [`url`](HyperlinkInfo::url), not path-resolved. An internal hyperlink's `w:anchor`
+    /// (a bookmark name) is reported in [`anchor`](HyperlinkInfo::anchor).
+    ///
+    /// Takes `&mut Document` because resolution may need to reach the part's relationships;
+    /// like the header resolution path it never marks the document modified, so a read-only
+    /// call leaves every part byte-identical on save.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use docxml::Document;
+    ///
+    /// let mut doc = Document::new();
+    /// let p = doc.add_paragraph("See ");
+    /// p.add_hyperlink(&mut doc, "https://example.com/", "the site");
+    /// let links = p.hyperlinks(&mut doc);
+    /// assert_eq!(links.len(), 1);
+    /// assert_eq!(links[0].url.as_deref(), Some("https://example.com/"));
+    /// assert_eq!(links[0].text, "the site");
+    /// ```
+    pub fn hyperlinks(&self, doc: &mut Document) -> Vec<HyperlinkInfo> {
+        let part_name = doc.part_name(self.part).to_string();
+        let anchor_attr = doc.qn(self.part, "anchor");
+
+        // Gather each hyperlink's r:id, anchor, and text under an immutable borrow first,
+        // then resolve r:id -> url (which borrows the document again).
+        let collected: Vec<(Option<String>, Option<String>, String)> = {
+            let tree = doc.tree(self.part);
+            tree.children(self.node)
+                .iter()
+                .copied()
+                .filter(|&c| is_wml_element(tree, c, "hyperlink"))
+                .map(|h| {
+                    let mut text = String::new();
+                    append_run_text(tree, h, &mut text);
+                    let r_id = rel_id_attr(tree, h).map(str::to_owned);
+                    let anchor = tree.attr(h, &anchor_attr).map(str::to_owned);
+                    (r_id, anchor, text)
+                })
+                .collect()
+        };
+
+        collected
+            .into_iter()
+            .map(|(r_id, anchor, text)| {
+                let url = r_id.and_then(|id| doc.rel_target_raw(&part_name, &id));
+                HyperlinkInfo { url, anchor, text }
+            })
+            .collect()
+    }
+
+    /// Append an external hyperlink to the paragraph, returning the run carrying its text.
+    ///
+    /// Adds an `External`-mode relationship (type
+    /// `…/officeDocument/2006/relationships/hyperlink`) with `url` as its target to *this
+    /// paragraph's part's* relationships — creating that part's rels part if it has none —
+    /// and appends `<w:hyperlink r:id="…">` containing one run whose `w:rPr` opens with a
+    /// `w:rStyle w:val="Hyperlink"` reference. A hyperlink in a body paragraph therefore
+    /// registers its relationship in `word/_rels/document.xml.rels`, one in a header in
+    /// `word/_rels/headerN.xml.rels`.
+    ///
+    /// The `Hyperlink` character style gives the run Word's conventional blue-underlined
+    /// look. A document that does not define that style (the blank template built by
+    /// [`Document::new`] does not) still produces schema-valid output — the `w:rStyle`
+    /// reference to an undefined style is simply ignored on render — so authoring a
+    /// hyperlink never requires first creating the style.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use docxml::Document;
+    ///
+    /// let mut doc = Document::new();
+    /// let p = doc.add_paragraph("Visit ");
+    /// let run = p.add_hyperlink(&mut doc, "https://example.com/", "Example");
+    /// assert_eq!(run.text(&doc), "Example");
+    /// assert_eq!(p.text(&doc), "Visit Example");
+    /// ```
+    pub fn add_hyperlink(&self, doc: &mut Document, url: &str, text: &str) -> Run {
+        let part_name = doc.part_name(self.part).to_string();
+        let r_id = doc
+            .add_relationship(&part_name, HYPERLINK_REL_TYPE, url, true)
+            .expect("relationships part is editable");
+        self.build_hyperlink(doc, Some(&r_id), None, text)
+    }
+
+    /// Append an internal (anchor) hyperlink to the paragraph, returning the run carrying
+    /// its text.
+    ///
+    /// The same as [`add_hyperlink`](Self::add_hyperlink) but the `w:hyperlink` carries a
+    /// `w:anchor` naming a bookmark in the same document (see [`add_bookmark`](Self::add_bookmark))
+    /// instead of an `r:id` — so **no relationship is created**. The run is styled with the
+    /// `Hyperlink` character style just as for an external link.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use docxml::Document;
+    ///
+    /// let mut doc = Document::new();
+    /// let target = doc.add_paragraph("Signature block");
+    /// target.add_bookmark(&mut doc, "sig_block");
+    /// let p = doc.add_paragraph("Jump to the ");
+    /// p.add_anchor_hyperlink(&mut doc, "sig_block", "signature");
+    /// assert_eq!(p.hyperlinks(&mut doc)[0].anchor.as_deref(), Some("sig_block"));
+    /// ```
+    pub fn add_anchor_hyperlink(&self, doc: &mut Document, anchor: &str, text: &str) -> Run {
+        self.build_hyperlink(doc, None, Some(anchor), text)
+    }
+
+    /// Append a bookmark anchor point (`w:bookmarkStart` + `w:bookmarkEnd`) to the paragraph.
+    ///
+    /// The pair is appended around nothing — a zero-length anchor point in python-docx's
+    /// style — so it marks a location an [`add_anchor_hyperlink`](Self::add_anchor_hyperlink)
+    /// can jump to. Both elements share a fresh `w:id` unique across the part (the max
+    /// existing bookmark id plus one), and the start carries the `w:name`.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use docxml::Document;
+    ///
+    /// let mut doc = Document::new();
+    /// let p = doc.add_paragraph("Here");
+    /// p.add_bookmark(&mut doc, "here");
+    /// ```
+    pub fn add_bookmark(&self, doc: &mut Document, name: &str) {
+        let id_attr = doc.qn(self.part, "id");
+        let id = next_bookmark_id(doc.tree(self.part), &id_attr);
+        let start_name = doc.qn(self.part, "bookmarkStart");
+        let end_name = doc.qn(self.part, "bookmarkEnd");
+        let name_attr = doc.qn(self.part, "name");
+        let id_str = id.to_string();
+
+        let tree = doc.tree_mut(self.part);
+        let start = tree.create_element(start_name);
+        // CT_Bookmark attribute order: w:id then w:name.
+        tree.set_attr(start, id_attr.clone(), id_str.clone());
+        tree.set_attr(start, name_attr, name);
+        tree.append_child(self.node, start);
+
+        let end = tree.create_element(end_name);
+        tree.set_attr(end, id_attr, id_str);
+        tree.append_child(self.node, end);
     }
 
     /// Append a run carrying `text`, returning a handle to it.
@@ -573,6 +763,56 @@ impl Paragraph {
         }
     }
 
+    /// Build and append a `w:hyperlink` (external `r:id` or internal `w:anchor`) carrying a
+    /// single run: `<w:hyperlink …><w:r><w:rPr><w:rStyle w:val="Hyperlink"/></w:rPr><w:t>text</w:t></w:r></w:hyperlink>`.
+    /// Returns the run handle. Exactly one of `r_id` / `anchor` is `Some` at the call sites.
+    fn build_hyperlink(
+        &self,
+        doc: &mut Document,
+        r_id: Option<&str>,
+        anchor: Option<&str>,
+        text: &str,
+    ) -> Run {
+        let hlink_name = doc.qn(self.part, "hyperlink");
+        let anchor_attr = doc.qn(self.part, "anchor");
+        let r_name = doc.qn(self.part, "r");
+        let rpr_name = doc.qn(self.part, "rPr");
+        let rstyle_name = doc.qn(self.part, "rStyle");
+        let t_name = doc.qn(self.part, "t");
+        let val_attr = doc.qn(self.part, "val");
+        let id_attr = rel_id_attr_name(doc.tree(self.part));
+        let preserve = needs_space_preserve(text);
+
+        let tree = doc.tree_mut(self.part);
+        let hlink = tree.create_element(hlink_name);
+        if let Some(id) = r_id {
+            tree.set_attr(hlink, id_attr, id);
+        }
+        if let Some(a) = anchor {
+            tree.set_attr(hlink, anchor_attr, a);
+        }
+
+        // The run: rStyle="Hyperlink" is the first (and here only) w:rPr child per RPR_ORDER.
+        let r = tree.create_element(r_name);
+        let rpr = tree.create_element(rpr_name);
+        let rstyle = tree.create_element(rstyle_name);
+        tree.set_attr(rstyle, val_attr, "Hyperlink");
+        tree.append_child(rpr, rstyle);
+        tree.append_child(r, rpr);
+
+        let t = tree.create_element(t_name);
+        let content = tree.create_text(text);
+        tree.append_child(t, content);
+        tree.append_child(r, t);
+        if preserve {
+            tree.set_attr(t, "xml:space", "preserve");
+        }
+
+        tree.append_child(hlink, r);
+        tree.append_child(self.node, hlink);
+        Run::from_node(self.part, r)
+    }
+
     /// The paragraph's direct `w:r` children as node ids.
     fn run_nodes<'a>(&self, tree: &'a XmlTree) -> impl Iterator<Item = NodeId> + 'a {
         tree.children(self.node)
@@ -681,6 +921,25 @@ pub(super) fn read_numpr(tree: &XmlTree, numpr: NodeId, val_name: &str) -> Optio
         .and_then(|v| v.trim().parse::<u32>().ok())
         .unwrap_or(0);
     Some((numid, ilvl))
+}
+
+/// The next free bookmark `w:id` for a part: the maximum `w:id` on any `w:bookmarkStart`
+/// anywhere in the part, plus one (`0` when the part has no bookmarks). `id_attr` is the
+/// part's qualified `w:id` attribute name. Scanning the whole tree — not just this
+/// paragraph — keeps ids unique across the part, as the schema requires.
+fn next_bookmark_id(tree: &XmlTree, id_attr: &str) -> u32 {
+    let mut max: i64 = -1;
+    for node in tree.descendants(tree.root()) {
+        if is_wml_element(tree, node, "bookmarkStart") {
+            if let Some(v) = tree
+                .attr(node, id_attr)
+                .and_then(|s| s.trim().parse::<i64>().ok())
+            {
+                max = max.max(v);
+            }
+        }
+    }
+    (max + 1) as u32
 }
 
 /// Append a run's text (python-docx semantics) to `out`: `w:t` text verbatim, `w:tab`
