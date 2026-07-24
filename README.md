@@ -43,7 +43,8 @@ doc.save("contract-signed.docx")?;
 
 - [x] OPC packaging layer (zip, relationships, byte-for-byte round-trip test)
 - [x] Lossless mutable XML tree with semantic round-trip tests against real-world documents
-- [ ] Paragraphs, runs, character/paragraph formatting
+- [x] `Document` / `Paragraph` / `Run` — text read/edit, bold/italic, embedded blank template (create)
+- [ ] Character/paragraph formatting (size, color, alignment, styles read)
 - [ ] Tables, sections, headers/footers
 - [ ] Images
 - [ ] Styles (read + pass-through first, authoring later)
