@@ -108,6 +108,254 @@ impl Length {
     }
 }
 
+/// The point at which line numbering restarts (`w:lnNumType/@w:restart`).
+///
+/// Maps to `w:val` `newPage` / `newSection` / `continuous` — the three values of the
+/// schema's `ST_LineNumberRestart` (ECMA-376 §17.18.55). Per that schema the attribute
+/// defaults to `newPage` when absent, so [`NewPage`](LineNumberRestart::NewPage) is written
+/// implicitly (the attribute is omitted) and is read back for a missing `w:restart`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum LineNumberRestart {
+    /// Line numbering restarts at the top of each page (`w:restart="newPage"`, the schema
+    /// default).
+    #[default]
+    NewPage,
+    /// Line numbering restarts at the start of each section (`w:restart="newSection"`).
+    NewSection,
+    /// Line numbering runs continuously across pages and sections
+    /// (`w:restart="continuous"`).
+    Continuous,
+}
+
+impl LineNumberRestart {
+    /// This restart mode as a `w:lnNumType` `w:restart` string.
+    pub(crate) fn to_val(self) -> &'static str {
+        match self {
+            LineNumberRestart::NewPage => "newPage",
+            LineNumberRestart::NewSection => "newSection",
+            LineNumberRestart::Continuous => "continuous",
+        }
+    }
+
+    /// Parse a `w:lnNumType` `w:restart`. Recognizes `newPage`/`newSection`/`continuous`;
+    /// anything else is `None` (the caller then falls back to the `newPage` default).
+    pub(crate) fn from_val(val: &str) -> Option<LineNumberRestart> {
+        match val.trim() {
+            "newPage" => Some(LineNumberRestart::NewPage),
+            "newSection" => Some(LineNumberRestart::NewSection),
+            "continuous" => Some(LineNumberRestart::Continuous),
+            _ => None,
+        }
+    }
+}
+
+/// Section line numbering (`w:sectPr/w:lnNumType`).
+///
+/// Adds line numbers down the side of a section's pages — the numbered-line "pleading
+/// paper" many U.S. courts require (California and Arizona pleadings run 28 numbered lines
+/// per page). [`count_by`](Self::count_by) is the interval at which a line is numbered
+/// (`1` numbers every line), [`start`](Self::start) the first number,
+/// [`distance`](Self::distance) the gap between the numbers and the text (a
+/// [`Length`], serialized in twips; `None` lets Word choose), and
+/// [`restart`](Self::restart) where numbering resets.
+///
+/// [`Default`] is Word's own default: count every line (`count_by = 1`), start at `1`, no
+/// explicit distance, restart on each new page.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LineNumbering {
+    /// The interval at which lines are numbered (`w:countBy`); `1` numbers every line.
+    pub count_by: u32,
+    /// The first line number (`w:start`).
+    pub start: u32,
+    /// The distance between the line numbers and the body text (`w:distance`, in twips), or
+    /// `None` to leave it to Word.
+    pub distance: Option<Length>,
+    /// Where line numbering restarts (`w:restart`).
+    pub restart: LineNumberRestart,
+}
+
+impl Default for LineNumbering {
+    fn default() -> Self {
+        LineNumbering {
+            count_by: 1,
+            start: 1,
+            distance: None,
+            restart: LineNumberRestart::NewPage,
+        }
+    }
+}
+
+/// The base a paragraph frame's horizontal/vertical position is measured from
+/// (`w:framePr/@w:hAnchor`, `@w:vAnchor`).
+///
+/// Maps to `w:val` `text` / `margin` / `page` (`ST_HAnchor` / `ST_VAnchor`, ECMA-376
+/// §17.18.35 / §17.18.89). [`Text`](FrameAnchor::Text) — the [`Default`] — anchors to the
+/// surrounding text, [`Margin`](FrameAnchor::Margin) to the page margin, and
+/// [`Page`](FrameAnchor::Page) to the page edge.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FrameAnchor {
+    /// Anchored to the surrounding text (`w:val="text"`, the default).
+    #[default]
+    Text,
+    /// Anchored to the page margin (`w:val="margin"`).
+    Margin,
+    /// Anchored to the page edge (`w:val="page"`).
+    Page,
+}
+
+impl FrameAnchor {
+    /// This anchor as a `w:hAnchor` / `w:vAnchor` string.
+    pub(crate) fn to_val(self) -> &'static str {
+        match self {
+            FrameAnchor::Text => "text",
+            FrameAnchor::Margin => "margin",
+            FrameAnchor::Page => "page",
+        }
+    }
+
+    /// Parse a `w:hAnchor` / `w:vAnchor`. Recognizes `text`/`margin`/`page`; anything else is
+    /// `None` (the caller then falls back to the `text` default).
+    pub(crate) fn from_val(val: &str) -> Option<FrameAnchor> {
+        match val.trim() {
+            "text" => Some(FrameAnchor::Text),
+            "margin" => Some(FrameAnchor::Margin),
+            "page" => Some(FrameAnchor::Page),
+            _ => None,
+        }
+    }
+}
+
+/// How surrounding text wraps around a paragraph frame (`w:framePr/@w:wrap`).
+///
+/// Maps to `w:val` `around` / `none` / `notBeside` (a subset of `ST_Wrap`, ECMA-376
+/// §17.18.104). The attribute is optional; a frame with no `w:wrap` reads as `None`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FrameWrap {
+    /// Text wraps around the frame (`w:wrap="around"`).
+    Around,
+    /// Text does not wrap; the frame overlaps it (`w:wrap="none"`).
+    None,
+    /// Text does not appear beside the frame (`w:wrap="notBeside"`).
+    NotBeside,
+}
+
+impl FrameWrap {
+    /// This wrap mode as a `w:framePr` `w:wrap` string.
+    pub(crate) fn to_val(self) -> &'static str {
+        match self {
+            FrameWrap::Around => "around",
+            FrameWrap::None => "none",
+            FrameWrap::NotBeside => "notBeside",
+        }
+    }
+
+    /// Parse a `w:framePr` `w:wrap`. Recognizes `around`/`none`/`notBeside`; anything else
+    /// (including the unmodeled `auto`/`tight`/`through`) is `None`.
+    pub(crate) fn from_val(val: &str) -> Option<FrameWrap> {
+        match val.trim() {
+            "around" => Some(FrameWrap::Around),
+            "none" => Some(FrameWrap::None),
+            "notBeside" => Some(FrameWrap::NotBeside),
+            _ => None,
+        }
+    }
+}
+
+/// A paragraph frame (`w:pPr/w:framePr`): a positioned, sized text box that floats a
+/// paragraph out of the normal flow.
+///
+/// Frames build boxed callouts — a bordered warning notice, a sidebar — by pairing a frame
+/// (position and size) with paragraph [borders](crate::Paragraph::set_borders). All fields
+/// are optional or default: [`width`](Self::width) / [`height`](Self::height) size the frame
+/// (both [`Length`]s, serialized in twips; a set height writes `w:hRule="atLeast"`),
+/// [`x`](Self::x) / [`y`](Self::y) offset it from its anchor,
+/// [`h_anchor`](Self::h_anchor) / [`v_anchor`](Self::v_anchor) choose the anchor base, and
+/// [`wrap`](Self::wrap) sets text wrapping. [`Default`] is an empty frame (no size, no
+/// offset, both anchors [`Text`](FrameAnchor::Text), no wrap).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct FrameOptions {
+    /// The frame width (`w:w`, in twips), or `None` to leave it unset.
+    pub width: Option<Length>,
+    /// The frame height (`w:h`, in twips); when set, `w:hRule="atLeast"` is also written.
+    pub height: Option<Length>,
+    /// The horizontal offset from the horizontal anchor (`w:x`, in twips).
+    pub x: Option<Length>,
+    /// The vertical offset from the vertical anchor (`w:y`, in twips).
+    pub y: Option<Length>,
+    /// The base the horizontal position is measured from (`w:hAnchor`).
+    pub h_anchor: FrameAnchor,
+    /// The base the vertical position is measured from (`w:vAnchor`).
+    pub v_anchor: FrameAnchor,
+    /// How text wraps around the frame (`w:wrap`), or `None` for no explicit wrap.
+    pub wrap: Option<FrameWrap>,
+}
+
+/// A paragraph border line style (`w:pBdr` edge `@w:val`).
+///
+/// Maps to `w:val` `single` / `double` / `thick` / `dotted` / `dashed` — the handful of
+/// `ST_Border` (ECMA-376 §17.18.2) styles this API models. The enum is intentionally
+/// **closed**: an edge whose `w:val` is any other value (`wave`, `triple`, an art border,
+/// …) is not representable, so [`Paragraph::borders`](crate::Paragraph::borders) reports
+/// that edge as `None` rather than guessing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BorderStyle {
+    /// A single solid line (`w:val="single"`).
+    Single,
+    /// A double line (`w:val="double"`).
+    Double,
+    /// A thick solid line (`w:val="thick"`).
+    Thick,
+    /// A dotted line (`w:val="dotted"`).
+    Dotted,
+    /// A dashed line (`w:val="dashed"`).
+    Dashed,
+}
+
+impl BorderStyle {
+    /// This style as a `w:pBdr` edge `w:val` string.
+    pub(crate) fn to_val(self) -> &'static str {
+        match self {
+            BorderStyle::Single => "single",
+            BorderStyle::Double => "double",
+            BorderStyle::Thick => "thick",
+            BorderStyle::Dotted => "dotted",
+            BorderStyle::Dashed => "dashed",
+        }
+    }
+
+    /// Parse a `w:pBdr` edge `w:val`. Recognizes only the five modeled styles; any other
+    /// value returns `None`, and the edge as a whole reads back as `None` (the enum is
+    /// closed — see the type docs).
+    pub(crate) fn from_val(val: &str) -> Option<BorderStyle> {
+        match val.trim() {
+            "single" => Some(BorderStyle::Single),
+            "double" => Some(BorderStyle::Double),
+            "thick" => Some(BorderStyle::Thick),
+            "dotted" => Some(BorderStyle::Dotted),
+            "dashed" => Some(BorderStyle::Dashed),
+            _ => None,
+        }
+    }
+}
+
+/// One edge of a paragraph border (`w:pBdr/w:top`, `w:left`, `w:bottom`, or `w:right`).
+///
+/// [`size`](Self::size) is the line width in eighths of a point (`w:sz`; e.g. `4` = ½ pt),
+/// [`space`](Self::space) the padding between the border and the text in points (`w:space`),
+/// and [`color`](Self::color) the line color (`w:color`; `None` writes `w:color="auto"` and
+/// reads Word's automatic color back as `None`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BorderEdge {
+    /// The line style (`w:val`).
+    pub style: BorderStyle,
+    /// The line width in eighths of a point (`w:sz`).
+    pub size: u8,
+    /// The padding between the border and the text, in points (`w:space`).
+    pub space: u8,
+    /// The line color (`w:color`); `None` means automatic (`w:color="auto"`).
+    pub color: Option<RgbColor>,
+}
+
 /// A measurement in points, used for font size (`w:sz`).
 ///
 /// WordprocessingML stores font size in *half-points*, so [`Pt`] serializes to `w:val`

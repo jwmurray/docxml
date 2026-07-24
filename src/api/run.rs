@@ -286,6 +286,26 @@ impl Run {
         *self
     }
 
+    /// Whether the run is hidden text (`w:rPr/w:vanish`).
+    ///
+    /// Hidden text is present in the document but not shown (or printed) by default; Word
+    /// uses it for table-of-authorities / table-of-contents marker text, index entries, and
+    /// the like. Same toggle rule as [`is_bold`](Self::is_bold): present and not
+    /// `w:val="0"/"false"` is on. Direct properties only — see the [type docs](Self#direct-properties-only).
+    ///
+    /// Hidden runs still contribute their text to [`text`](Self::text) and
+    /// [`Paragraph::text`](super::Paragraph::text) — the run is hidden, not absent.
+    pub fn vanish(&self, doc: &Document) -> bool {
+        self.has_toggle(doc, "vanish")
+    }
+
+    /// Turn hidden text on or off (`w:rPr/w:vanish`). On adds a bare `w:vanish`; off removes
+    /// it — the same representation as [`bold`](Self::bold).
+    pub fn set_vanish(&self, doc: &mut Document, on: bool) -> Run {
+        self.set_toggle(doc, "vanish", on);
+        *self
+    }
+
     /// Append a break (`w:br`) to the run.
     ///
     /// A [`BreakType::Page`] / [`BreakType::Column`] writes `w:br w:type="page"` /

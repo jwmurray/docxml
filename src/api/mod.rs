@@ -44,7 +44,10 @@ pub use picture::Picture;
 pub use run::Run;
 pub use section::Section;
 pub use table::{Cell, Row, Table, VMerge};
-pub use units::{Alignment, BreakType, Length, LineSpacing, Pt, RgbColor, TabAlignment, TabLeader};
+pub use units::{
+    Alignment, BorderEdge, BorderStyle, BreakType, FrameAnchor, FrameOptions, FrameWrap, Length,
+    LineNumberRestart, LineNumbering, LineSpacing, Pt, RgbColor, TabAlignment, TabLeader,
+};
 
 use crate::xml::{NodeId, XmlTree};
 

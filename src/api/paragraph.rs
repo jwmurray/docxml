@@ -4,8 +4,9 @@ use crate::xml::{NodeId, XmlTree};
 
 use super::header::{rel_id_attr, rel_id_attr_name};
 use super::{
-    Alignment, Document, Length, LineSpacing, PartId, Pt, Run, TabAlignment, TabLeader,
-    is_wml_element, needs_space_preserve, ordered_insert_index, rank_in,
+    Alignment, BorderEdge, BorderStyle, Document, FrameAnchor, FrameOptions, FrameWrap, Length,
+    LineSpacing, PartId, Pt, RgbColor, Run, TabAlignment, TabLeader, is_wml_element,
+    needs_space_preserve, ordered_insert_index, rank_in,
 };
 
 /// The relationship type of a hyperlink relationship (the transitional URI Word writes).
@@ -80,6 +81,12 @@ const PPR_ORDER: &[&str] = &[
 /// only: `w:ilvl` (the level) precedes `w:numId` (the numbering reference), which precede
 /// the rarely written revision children. New children are inserted to keep this order.
 const NUMPR_ORDER: &[&str] = &["ilvl", "numId", "numberingChange", "ins"];
+
+/// Canonical `w:pBdr` child order (ECMA-376 §17.3.1.24, `CT_PBdr` sequence), local names
+/// only: the four edges `w:top`, `w:left`, `w:bottom`, `w:right`, then `w:between` and
+/// `w:bar`. New edges are inserted to keep this order so any pass-through `w:between`/`w:bar`
+/// stays after the authored edges.
+const PBDR_ORDER: &[&str] = &["top", "left", "bottom", "right", "between", "bar"];
 
 /// A lightweight handle to a `w:p` paragraph.
 ///
@@ -607,6 +614,220 @@ impl Paragraph {
         *self
     }
 
+    /// Whether line numbering is suppressed for this paragraph (`w:pPr/w:suppressLineNumbers`).
+    ///
+    /// In a section with [line numbering](crate::Section::set_line_numbering), a paragraph
+    /// with this flag is skipped by the numbered-line count — used for captions or block
+    /// quotes that should not consume a line number on pleading paper. Same toggle rule as
+    /// [`keep_together`](Self::keep_together): present and not `w:val="0"/"false"` is on.
+    pub fn suppress_line_numbers(&self, doc: &Document) -> bool {
+        self.ppr_toggle(doc, "suppressLineNumbers")
+    }
+
+    /// Set whether line numbering is suppressed for this paragraph
+    /// (`w:pPr/w:suppressLineNumbers`).
+    ///
+    /// `w:suppressLineNumbers` sits in `CT_PPr` order after `w:numPr` and before `w:pBdr`
+    /// (ECMA-376 §17.3.1.26; present in [`PPR_ORDER`]). On ensures a bare element, off removes
+    /// it.
+    pub fn set_suppress_line_numbers(&self, doc: &mut Document, on: bool) -> Paragraph {
+        self.set_ppr_toggle(doc, "suppressLineNumbers", on);
+        *self
+    }
+
+    /// This paragraph's frame (`w:pPr/w:framePr`), or `None` when the paragraph is not framed.
+    ///
+    /// Reads `w:w` / `w:h` (as twips [`Length`]s) into
+    /// [`width`](FrameOptions::width) / [`height`](FrameOptions::height), `w:x` / `w:y` into
+    /// the offsets, `w:hAnchor` / `w:vAnchor` into the anchors (defaulting to
+    /// [`Text`](FrameAnchor::Text) when absent or unrecognized), and `w:wrap` into
+    /// [`wrap`](FrameOptions::wrap).
+    pub fn frame(&self, doc: &Document) -> Option<FrameOptions> {
+        let tree = doc.tree(self.part);
+        let fp = self.ppr_child(tree, "framePr")?;
+        let read_len = |local: &str| {
+            tree.attr(fp, &doc.qn(self.part, local))
+                .and_then(Length::from_twips_str)
+        };
+        let read_anchor = |local: &str| {
+            tree.attr(fp, &doc.qn(self.part, local))
+                .and_then(FrameAnchor::from_val)
+                .unwrap_or(FrameAnchor::Text)
+        };
+        Some(FrameOptions {
+            width: read_len("w"),
+            height: read_len("h"),
+            x: read_len("x"),
+            y: read_len("y"),
+            h_anchor: read_anchor("hAnchor"),
+            v_anchor: read_anchor("vAnchor"),
+            wrap: tree
+                .attr(fp, &doc.qn(self.part, "wrap"))
+                .and_then(FrameWrap::from_val),
+        })
+    }
+
+    /// Set this paragraph's frame (`w:pPr/w:framePr`), creating the element in canonical
+    /// `w:pPr` order if absent.
+    ///
+    /// `w:framePr` sits early in `CT_PPr` — after `w:pageBreakBefore` and before
+    /// `w:widowControl`/`w:numPr` (ECMA-376 §17.3.1.26; present in [`PPR_ORDER`]). Writes
+    /// `w:w` / `w:h` (in twips) for a set width/height — a set height also writes
+    /// `w:hRule="atLeast"` — `w:x` / `w:y` for the offsets, always `w:hAnchor` / `w:vAnchor`,
+    /// and `w:wrap` when set. The managed attributes are cleared first so a re-set never
+    /// leaves a stale one behind.
+    pub fn set_frame(&self, doc: &mut Document, frame: FrameOptions) -> Paragraph {
+        let w_attr = doc.qn(self.part, "w");
+        let h_attr = doc.qn(self.part, "h");
+        let hrule_attr = doc.qn(self.part, "hRule");
+        let x_attr = doc.qn(self.part, "x");
+        let y_attr = doc.qn(self.part, "y");
+        let hanchor_attr = doc.qn(self.part, "hAnchor");
+        let vanchor_attr = doc.qn(self.part, "vAnchor");
+        let wrap_attr = doc.qn(self.part, "wrap");
+        let fp = self.ensure_ppr_child(doc, "framePr");
+        let tree = doc.tree_mut(self.part);
+        for attr in [
+            &w_attr,
+            &h_attr,
+            &hrule_attr,
+            &x_attr,
+            &y_attr,
+            &hanchor_attr,
+            &vanchor_attr,
+            &wrap_attr,
+        ] {
+            tree.remove_attr(fp, attr);
+        }
+        if let Some(width) = frame.width {
+            tree.set_attr(fp, w_attr, width.to_twips_string());
+        }
+        if let Some(height) = frame.height {
+            tree.set_attr(fp, h_attr, height.to_twips_string());
+            tree.set_attr(fp, hrule_attr, "atLeast");
+        }
+        if let Some(x) = frame.x {
+            tree.set_attr(fp, x_attr, x.to_twips_string());
+        }
+        if let Some(y) = frame.y {
+            tree.set_attr(fp, y_attr, y.to_twips_string());
+        }
+        tree.set_attr(fp, hanchor_attr, frame.h_anchor.to_val());
+        tree.set_attr(fp, vanchor_attr, frame.v_anchor.to_val());
+        if let Some(wrap) = frame.wrap {
+            tree.set_attr(fp, wrap_attr, wrap.to_val());
+        }
+        *self
+    }
+
+    /// Remove this paragraph's frame, deleting `w:pPr/w:framePr`.
+    pub fn clear_frame(&self, doc: &mut Document) {
+        if let Some(fp) = self.ppr_child(doc.tree(self.part), "framePr") {
+            doc.tree_mut(self.part).remove_from_parent(fp);
+        }
+    }
+
+    /// This paragraph's borders as `(top, bottom, left, right)` (`w:pPr/w:pBdr`).
+    ///
+    /// Each edge is `Some` only when the matching `w:pBdr` child is present *and* carries a
+    /// modeled [`BorderStyle`]; an edge whose `w:val` is a style this API does not model
+    /// reads back as `None` (the enum is closed — see [`BorderStyle`]). `w:color="auto"` (or
+    /// an unparsable color) reads as [`color`](BorderEdge::color) `None`.
+    pub fn borders(
+        &self,
+        doc: &Document,
+    ) -> (
+        Option<BorderEdge>,
+        Option<BorderEdge>,
+        Option<BorderEdge>,
+        Option<BorderEdge>,
+    ) {
+        let tree = doc.tree(self.part);
+        let Some(pbdr) = self.ppr_child(tree, "pBdr") else {
+            return (None, None, None, None);
+        };
+        let read_edge = |local: &str| -> Option<BorderEdge> {
+            let el = tree
+                .children(pbdr)
+                .iter()
+                .copied()
+                .find(|&c| is_wml_element(tree, c, local))?;
+            let style = BorderStyle::from_val(tree.attr(el, &doc.qn(self.part, "val"))?)?;
+            let size = tree
+                .attr(el, &doc.qn(self.part, "sz"))
+                .and_then(|v| v.trim().parse::<u8>().ok())
+                .unwrap_or(0);
+            let space = tree
+                .attr(el, &doc.qn(self.part, "space"))
+                .and_then(|v| v.trim().parse::<u8>().ok())
+                .unwrap_or(0);
+            let color = tree
+                .attr(el, &doc.qn(self.part, "color"))
+                .and_then(RgbColor::from_hex);
+            Some(BorderEdge {
+                style,
+                size,
+                space,
+                color,
+            })
+        };
+        (
+            read_edge("top"),
+            read_edge("bottom"),
+            read_edge("left"),
+            read_edge("right"),
+        )
+    }
+
+    /// Set this paragraph's borders (`w:pPr/w:pBdr`).
+    ///
+    /// Each of `top`, `bottom`, `left`, `right` writes (or replaces) the matching `w:pBdr`
+    /// edge; a `None` edge omits it. The edges are (re)built in `CT_PBdr` order — `w:top`,
+    /// `w:left`, `w:bottom`, `w:right` (ECMA-376 §17.3.1.24; [`PBDR_ORDER`]) — so any
+    /// pass-through `w:between`/`w:bar` stays after them. When all four are `None` the whole
+    /// `w:pBdr` is removed (an empty `w:pBdr` would be pointless). `w:pBdr` itself sits in
+    /// `CT_PPr` after `w:suppressLineNumbers` and before `w:shd`.
+    pub fn set_borders(
+        &self,
+        doc: &mut Document,
+        top: Option<BorderEdge>,
+        bottom: Option<BorderEdge>,
+        left: Option<BorderEdge>,
+        right: Option<BorderEdge>,
+    ) -> Paragraph {
+        if top.is_none() && bottom.is_none() && left.is_none() && right.is_none() {
+            if let Some(pbdr) = self.ppr_child(doc.tree(self.part), "pBdr") {
+                doc.tree_mut(self.part).remove_from_parent(pbdr);
+            }
+            return *self;
+        }
+        let pbdr = self.ensure_ppr_child(doc, "pBdr");
+        // Remove the four managed edges, then rebuild the present ones in schema order.
+        for local in ["top", "left", "bottom", "right"] {
+            let existing = {
+                let tree = doc.tree(self.part);
+                tree.children(pbdr)
+                    .iter()
+                    .copied()
+                    .find(|&c| is_wml_element(tree, c, local))
+            };
+            if let Some(el) = existing {
+                doc.tree_mut(self.part).remove_from_parent(el);
+            }
+        }
+        for (local, edge) in [
+            ("top", top),
+            ("left", left),
+            ("bottom", bottom),
+            ("right", right),
+        ] {
+            if let Some(edge) = edge {
+                self.insert_border_edge(doc, pbdr, local, edge);
+            }
+        }
+        *self
+    }
+
     /// The paragraph's tab stops (`w:pPr/w:tabs`), in document order.
     ///
     /// Each entry is the stop's position, alignment, and leader. A `w:tab` with an
@@ -864,6 +1085,34 @@ impl Paragraph {
         let el = doc.tree_mut(self.part).create_element(name);
         doc.tree_mut(self.part).insert_child(numpr, index, el);
         el
+    }
+
+    /// Create a `w:pBdr` edge element (`w:top`/`w:left`/`w:bottom`/`w:right`) carrying the
+    /// edge's `w:val`, `w:sz`, `w:space`, and `w:color`, and insert it into `pbdr` in
+    /// `CT_PBdr` order. A `None` color writes `w:color="auto"`.
+    fn insert_border_edge(&self, doc: &mut Document, pbdr: NodeId, local: &str, edge: BorderEdge) {
+        let val_attr = doc.qn(self.part, "val");
+        let sz_attr = doc.qn(self.part, "sz");
+        let space_attr = doc.qn(self.part, "space");
+        let color_attr = doc.qn(self.part, "color");
+        let name = doc.qn(self.part, local);
+        let index = ordered_insert_index(
+            doc.tree(self.part),
+            pbdr,
+            rank_in(PBDR_ORDER, local),
+            PBDR_ORDER,
+        );
+        let tree = doc.tree_mut(self.part);
+        let el = tree.create_element(name);
+        // CT_Border attribute order: val, then sz, space, and color.
+        tree.set_attr(el, val_attr, edge.style.to_val());
+        tree.set_attr(el, sz_attr, edge.size.to_string());
+        tree.set_attr(el, space_attr, edge.space.to_string());
+        match edge.color {
+            Some(color) => tree.set_attr(el, color_attr, color.to_hex()),
+            None => tree.set_attr(el, color_attr, "auto"),
+        }
+        tree.insert_child(pbdr, index, el);
     }
 
     /// A direct `w:pPr` child with the given WML local name, if present.

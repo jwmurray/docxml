@@ -22,7 +22,13 @@
 //! creating `word/settings.xml` when absent), and hyperlinks ([`HyperlinkInfo`] — read a
 //! paragraph's hyperlinks (external `r:id` targets resolved through the owning part's rels,
 //! internal `w:anchor` targets), `add_hyperlink` creating the External relationship,
-//! `add_anchor_hyperlink`, and `add_bookmark`) are implemented. See the
+//! `add_anchor_hyperlink`, and `add_bookmark`), and section line numbering, paragraph
+//! frames/borders, and hidden text ([`LineNumbering`] / [`LineNumberRestart`] —
+//! `Section::set_line_numbering` for `w:lnNumType` pleading-paper numbering, and
+//! `Paragraph::suppress_line_numbers`; [`FrameOptions`] / [`FrameAnchor`] / [`FrameWrap`] —
+//! `Paragraph::set_frame` for `w:framePr`; [`BorderEdge`] / [`BorderStyle`] —
+//! `Paragraph::set_borders` for `w:pBdr`; and `Run::set_vanish` for `w:vanish` hidden text)
+//! are implemented. See the
 //! [repository](https://github.com/jwmurray/docxml) for the architecture and roadmap.
 //!
 //! `docxml` is built on a lossless core: every part of a package is preserved
@@ -50,8 +56,9 @@ pub mod opc;
 pub mod xml;
 
 pub use api::{
-    Alignment, BreakType, Cell, Document, HeaderFooter, HeaderFooterType, HyperlinkInfo, Length,
-    LineSpacing, NumberFormat, Paragraph, Picture, Pt, RgbColor, Row, Run, Section, TabAlignment,
-    TabLeader, Table, VMerge,
+    Alignment, BorderEdge, BorderStyle, BreakType, Cell, Document, FrameAnchor, FrameOptions,
+    FrameWrap, HeaderFooter, HeaderFooterType, HyperlinkInfo, Length, LineNumberRestart,
+    LineNumbering, LineSpacing, NumberFormat, Paragraph, Picture, Pt, RgbColor, Row, Run, Section,
+    TabAlignment, TabLeader, Table, VMerge,
 };
 pub use error::{Error, Result};
