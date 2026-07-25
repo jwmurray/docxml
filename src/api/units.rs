@@ -361,7 +361,12 @@ pub struct BorderEdge {
 /// WordprocessingML stores font size in *half-points*, so [`Pt`] serializes to `w:val`
 /// as `round(points * 2)` — e.g. `Pt(14.0)` → `"28"`, `Pt(10.5)` → `"21"`. Reading is
 /// tolerant: an integer or decimal half-point string parses back to points.
-#[derive(Debug, Clone, Copy, PartialEq)]
+///
+/// `Pt` is ordered (`Pt(10.0) < Pt(12.0)`), so a type-floor check reads as a comparison
+/// rather than a dig into the inner `f64`. It is `PartialOrd` and not `Ord`/`Eq`, because
+/// the inner `f64` admits `NaN`, whose reflexivity `Eq` would falsely promise —
+/// [`Length`], whose representation is integral twips, carries the full `Ord`.
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
 pub struct Pt(pub f64);
 
 impl Pt {
@@ -697,6 +702,23 @@ mod tests {
         let m = Length::from_inches(1.25);
         assert_eq!(m.twips(), 1800);
         assert_eq!(m.emu(), 1_143_000);
+    }
+
+    /// The measurement types compare directly — a type-floor check is a comparison, not a
+    /// dig into the inner value. `Length` (integral twips) is totally ordered; `Pt`
+    /// (an `f64`) is partially ordered, `NaN` excepted.
+    #[test]
+    fn measurements_compare_directly() {
+        assert!(Pt(10.0) < Pt(12.0));
+        assert!(Pt(13.0) >= Pt(13.0));
+        assert_eq!(Pt(23.1).partial_cmp(&Pt(f64::NAN)), None);
+        assert!(Length::from_twips(288) < Length::from_inches(0.25));
+        assert_eq!(
+            [Length::from_twips(480), Length::from_twips(240)]
+                .iter()
+                .max(),
+            Some(&Length::from_twips(480))
+        );
     }
 
     #[test]
