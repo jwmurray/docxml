@@ -78,8 +78,14 @@ impl Package {
     /// Write the package to any seekable writer.
     pub fn write(&self, writer: impl Write + Seek) -> Result<()> {
         let mut zip = ZipWriter::new(writer);
-        let options =
-            SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+        // A fixed entry timestamp (the DOS epoch, 1980-01-01) makes saving a pure
+        // function of the package contents: the same document saved twice is
+        // byte-identical. The default would stamp wall-clock time into every entry,
+        // making saves that straddle a second boundary differ for no content reason —
+        // exactly what a byte-level comparator or a reproducible build cannot tolerate.
+        let options = SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Deflated)
+            .last_modified_time(zip::DateTime::default());
         for part in &self.parts {
             zip.start_file(&part.name, options)?;
             zip.write_all(&part.data)?;

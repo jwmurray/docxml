@@ -108,3 +108,23 @@ fn open_rejects_non_zip() {
     std::fs::write(&path, b"this is not a zip archive").unwrap();
     assert!(Package::open(&path).is_err());
 }
+
+/// Saving is a pure function of the package contents: two writes of the same
+/// document are byte-identical, even across a wall-clock second boundary (zip
+/// entry timestamps are pinned to the DOS epoch, not the current time).
+#[test]
+fn saving_twice_is_byte_identical_across_time() {
+    use std::io::Cursor;
+    let mut doc = docxml::Document::new();
+    doc.add_paragraph("determinism probe");
+    let mut a = Cursor::new(Vec::new());
+    doc.write(&mut a).expect("first write");
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    let mut b = Cursor::new(Vec::new());
+    doc.write(&mut b).expect("second write");
+    assert_eq!(
+        a.into_inner(),
+        b.into_inner(),
+        "same document, same bytes, regardless of when it is saved"
+    );
+}
