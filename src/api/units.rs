@@ -719,3 +719,75 @@ mod tests {
         assert_eq!(Length::from_twips_str("auto"), None);
     }
 }
+
+/// The kind of document grid a section uses (`w:docGrid/@w:type`).
+///
+/// [`Lines`](Self::Lines) is the variant that matters for pleading paper: it snaps each
+/// line of body text to the fixed vertical pitch of [`DocGrid::line_pitch`], which is the
+/// only OOXML control that pins lines-per-page exactly (the 28-line California/Arizona
+/// pleading grid). The char-snapping variants exist for completeness.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DocGridType {
+    /// `w:type="default"` — no grid; text lays out by its own spacing alone.
+    Default,
+    /// `w:type="lines"` — snap lines to the grid's vertical pitch.
+    Lines,
+    /// `w:type="linesAndChars"` — snap lines and characters.
+    LinesAndChars,
+    /// `w:type="snapToChars"` — snap characters only.
+    SnapToChars,
+}
+
+impl DocGridType {
+    pub(crate) fn to_val(self) -> &'static str {
+        match self {
+            DocGridType::Default => "default",
+            DocGridType::Lines => "lines",
+            DocGridType::LinesAndChars => "linesAndChars",
+            DocGridType::SnapToChars => "snapToChars",
+        }
+    }
+
+    pub(crate) fn from_val(val: &str) -> Option<DocGridType> {
+        match val.trim() {
+            "default" => Some(DocGridType::Default),
+            "lines" => Some(DocGridType::Lines),
+            "linesAndChars" => Some(DocGridType::LinesAndChars),
+            "snapToChars" => Some(DocGridType::SnapToChars),
+            _ => None,
+        }
+    }
+}
+
+/// A section's document grid (`w:sectPr/w:docGrid`) — the typed form of the element
+/// [`Section::set_doc_grid`](crate::Section::set_doc_grid) writes.
+///
+/// `line_pitch` is the vertical advance of one grid line, stored (like `w:spacing` line
+/// values) in twentieths of a point. A 28-line pleading page inside one-inch margins is
+/// nine inches of body — `Pt(23.1)` (462 twentieths) yields 28 lines, where Word's plain
+/// 12-point double spacing (`Pt(24.0)`, 480) stops at 27.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DocGrid {
+    /// The grid kind (`w:type`). [`DocGridType::Lines`] snaps text to the pitch.
+    pub grid_type: DocGridType,
+    /// Vertical pitch of one grid line (`w:linePitch`, twentieths of a point), or `None`
+    /// to write no pitch.
+    pub line_pitch: Option<Pt>,
+    /// Character pitch (`w:charSpace`), or `None` to write none. Word writes this for
+    /// East-Asian char grids; carried for fidelity rather than layout control.
+    pub char_space: Option<i64>,
+}
+
+/// A section's page-numbering settings (`w:sectPr/w:pgNumType`) — the typed form of the
+/// element [`Section::set_page_numbering`](crate::Section::set_page_numbering) writes.
+///
+/// Both fields are optional because the schema's defaults are what most documents want:
+/// an absent `w:fmt` numbers pages with Arabic decimals and an absent `w:start` continues
+/// from the previous section (or starts at 1).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct PageNumbering {
+    /// The number format (`w:fmt`), or `None` for the schema default (decimal).
+    pub format: Option<crate::api::NumberFormat>,
+    /// The starting page number (`w:start`), or `None` to continue numbering.
+    pub start: Option<i64>,
+}

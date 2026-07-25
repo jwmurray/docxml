@@ -4,8 +4,8 @@
 use crate::xml::{NodeId, XmlTree};
 
 use super::{
-    Document, Length, LineNumberRestart, LineNumbering, PartId, is_wml_element,
-    ordered_insert_index, rank_in,
+    DocGrid, DocGridType, Document, Length, LineNumberRestart, LineNumbering, NumberFormat,
+    PageNumbering, PartId, Pt, is_wml_element, ordered_insert_index, rank_in,
 };
 
 /// Canonical `w:sectPr` child order (ECMA-376 §17.6.17, `CT_SectPr` — the
@@ -234,6 +234,155 @@ impl Section {
     /// Remove this section's line numbering, deleting `w:sectPr/w:lnNumType`.
     pub fn clear_line_numbering(&self, doc: &mut Document) {
         if let Some(el) = self.sect_child(doc.tree(self.part), "lnNumType") {
+            doc.tree_mut(self.part).remove_from_parent(el);
+        }
+    }
+
+    /// This section's document grid (`w:sectPr/w:docGrid`), or `None` when unset.
+    ///
+    /// Reads `w:type` (an unrecognized or absent type reads as
+    /// [`Default`](DocGridType::Default), the schema default), `w:linePitch` (twentieths
+    /// of a point, as [`Pt`]), and `w:charSpace`.
+    pub fn doc_grid(&self, doc: &Document) -> Option<DocGrid> {
+        let tree = doc.tree(self.part);
+        let el = self.sect_child(tree, "docGrid")?;
+        let grid_type = tree
+            .attr(el, &doc.qn(self.part, "type"))
+            .and_then(DocGridType::from_val)
+            .unwrap_or(DocGridType::Default);
+        let line_pitch = tree
+            .attr(el, &doc.qn(self.part, "linePitch"))
+            .and_then(Pt::from_twentieths_str);
+        let char_space = tree
+            .attr(el, &doc.qn(self.part, "charSpace"))
+            .and_then(|v| v.trim().parse::<i64>().ok());
+        Some(DocGrid {
+            grid_type,
+            line_pitch,
+            char_space,
+        })
+    }
+
+    /// Set this section's document grid (`w:sectPr/w:docGrid`), creating the element in
+    /// `CT_SectPr` order if absent.
+    ///
+    /// `w:docGrid` sits near the end of `EG_SectPrContents` (ECMA-376 §17.6.17; present in
+    /// [`SECTPR_ORDER`]). Attributes are written in `CT_DocGrid` order (`w:type`,
+    /// `w:linePitch`, `w:charSpace`); previously written values are cleared first so a
+    /// re-set never leaves a stale attribute. A [`Default`](DocGridType::Default) type is
+    /// written explicitly (rather than omitted) so the element's intent is visible.
+    ///
+    /// This is the lines-per-page control: a grid of type [`Lines`](DocGridType::Lines)
+    /// with a `line_pitch` snaps every body line to that pitch, which is what makes an
+    /// exact 28-line pleading page expressible (see [`DocGrid`]).
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use docxml::{DocGrid, DocGridType, Document, Pt};
+    ///
+    /// let mut doc = Document::new();
+    /// let section = doc.sections()[0];
+    /// section.set_doc_grid(
+    ///     &mut doc,
+    ///     DocGrid {
+    ///         grid_type: DocGridType::Lines,
+    ///         line_pitch: Some(Pt(23.1)), // 462 twentieths -> 28 lines in a 9" body
+    ///         char_space: None,
+    ///     },
+    /// );
+    /// assert_eq!(section.doc_grid(&doc).unwrap().line_pitch, Some(Pt(23.1)));
+    /// ```
+    pub fn set_doc_grid(&self, doc: &mut Document, grid: DocGrid) -> Section {
+        let type_attr = doc.qn(self.part, "type");
+        let pitch_attr = doc.qn(self.part, "linePitch");
+        let space_attr = doc.qn(self.part, "charSpace");
+        let el = self.ensure_sect_child(doc, "docGrid");
+        let tree = doc.tree_mut(self.part);
+        tree.remove_attr(el, &type_attr);
+        tree.remove_attr(el, &pitch_attr);
+        tree.remove_attr(el, &space_attr);
+        // CT_DocGrid attribute order: type, linePitch, charSpace.
+        tree.set_attr(el, type_attr, grid.grid_type.to_val());
+        if let Some(pitch) = grid.line_pitch {
+            tree.set_attr(el, pitch_attr, pitch.to_twentieths_string());
+        }
+        if let Some(space) = grid.char_space {
+            tree.set_attr(el, space_attr, space.to_string());
+        }
+        *self
+    }
+
+    /// Remove this section's document grid, deleting `w:sectPr/w:docGrid`.
+    pub fn clear_doc_grid(&self, doc: &mut Document) {
+        if let Some(el) = self.sect_child(doc.tree(self.part), "docGrid") {
+            doc.tree_mut(self.part).remove_from_parent(el);
+        }
+    }
+
+    /// This section's page-numbering settings (`w:sectPr/w:pgNumType`), or `None` when
+    /// the element is absent.
+    ///
+    /// `format` is `None` when `w:fmt` is absent *or* names a format this API does not
+    /// model (the schema's list is long); `start` is `None` when `w:start` is absent —
+    /// meaning numbering continues from the previous section.
+    pub fn page_numbering(&self, doc: &Document) -> Option<PageNumbering> {
+        let tree = doc.tree(self.part);
+        let el = self.sect_child(tree, "pgNumType")?;
+        let format = tree
+            .attr(el, &doc.qn(self.part, "fmt"))
+            .and_then(NumberFormat::from_num_fmt);
+        let start = tree
+            .attr(el, &doc.qn(self.part, "start"))
+            .and_then(|v| v.trim().parse::<i64>().ok());
+        Some(PageNumbering { format, start })
+    }
+
+    /// Set this section's page numbering (`w:sectPr/w:pgNumType`), creating the element
+    /// in `CT_SectPr` order if absent.
+    ///
+    /// Attributes are written in `CT_PageNumber` order (`w:fmt`, `w:start`); a `None`
+    /// field writes no attribute, leaving the schema default in force (decimal format;
+    /// numbering continued from the previous section). The chapter-separator attributes
+    /// (`w:chapStyle`, `w:chapSep`) are not managed and pass through untouched.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use docxml::{Document, NumberFormat, PageNumbering};
+    ///
+    /// let mut doc = Document::new();
+    /// let section = doc.sections()[0];
+    /// // Restart at 1 in lowercase roman (a brief's front matter).
+    /// section.set_page_numbering(
+    ///     &mut doc,
+    ///     PageNumbering {
+    ///         format: Some(NumberFormat::LowerRoman),
+    ///         start: Some(1),
+    ///     },
+    /// );
+    /// assert_eq!(section.page_numbering(&doc).unwrap().start, Some(1));
+    /// ```
+    pub fn set_page_numbering(&self, doc: &mut Document, pn: PageNumbering) -> Section {
+        let fmt_attr = doc.qn(self.part, "fmt");
+        let start_attr = doc.qn(self.part, "start");
+        let el = self.ensure_sect_child(doc, "pgNumType");
+        let tree = doc.tree_mut(self.part);
+        tree.remove_attr(el, &fmt_attr);
+        tree.remove_attr(el, &start_attr);
+        // CT_PageNumber attribute order: fmt, start.
+        if let Some(format) = pn.format {
+            tree.set_attr(el, fmt_attr, format.num_fmt());
+        }
+        if let Some(start) = pn.start {
+            tree.set_attr(el, start_attr, start.to_string());
+        }
+        *self
+    }
+
+    /// Remove this section's page-numbering settings, deleting `w:sectPr/w:pgNumType`.
+    pub fn clear_page_numbering(&self, doc: &mut Document) {
+        if let Some(el) = self.sect_child(doc.tree(self.part), "pgNumType") {
             doc.tree_mut(self.part).remove_from_parent(el);
         }
     }

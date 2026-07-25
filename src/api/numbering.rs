@@ -54,8 +54,10 @@ pub enum NumberFormat {
 }
 
 impl NumberFormat {
-    /// The `w:numFmt/@w:val` string for this format.
-    fn num_fmt(self) -> &'static str {
+    /// The `ST_NumberFormat` string for this format — the `w:val` of a numbering
+    /// definition's `w:numFmt`, and equally of a section's `w:pgNumType/@w:fmt`
+    /// (both attributes share the schema type).
+    pub(super) fn num_fmt(self) -> &'static str {
         match self {
             NumberFormat::Decimal => "decimal",
             NumberFormat::LowerLetter => "lowerLetter",
@@ -63,6 +65,20 @@ impl NumberFormat {
             NumberFormat::LowerRoman => "lowerRoman",
             NumberFormat::UpperRoman => "upperRoman",
             NumberFormat::Bullet => "bullet",
+        }
+    }
+
+    /// Parse an `ST_NumberFormat` string back to a variant this API models, or `None`
+    /// for the (many) formats it does not.
+    pub(super) fn from_num_fmt(val: &str) -> Option<NumberFormat> {
+        match val.trim() {
+            "decimal" => Some(NumberFormat::Decimal),
+            "lowerLetter" => Some(NumberFormat::LowerLetter),
+            "upperLetter" => Some(NumberFormat::UpperLetter),
+            "lowerRoman" => Some(NumberFormat::LowerRoman),
+            "upperRoman" => Some(NumberFormat::UpperRoman),
+            "bullet" => Some(NumberFormat::Bullet),
+            _ => None,
         }
     }
 

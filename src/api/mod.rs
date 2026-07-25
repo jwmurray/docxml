@@ -49,8 +49,9 @@ pub use section::Section;
 pub use style::{Style, StyleType};
 pub use table::{Cell, Row, Table, VMerge};
 pub use units::{
-    Alignment, BorderEdge, BorderStyle, BreakType, FrameAnchor, FrameOptions, FrameWrap, Length,
-    LineNumberRestart, LineNumbering, LineSpacing, Pt, RgbColor, TabAlignment, TabLeader,
+    Alignment, BorderEdge, BorderStyle, BreakType, DocGrid, DocGridType, FrameAnchor, FrameOptions,
+    FrameWrap, Length, LineNumberRestart, LineNumbering, LineSpacing, PageNumbering, Pt, RgbColor,
+    TabAlignment, TabLeader,
 };
 
 use crate::xml::{NodeId, XmlTree};
