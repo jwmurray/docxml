@@ -140,9 +140,15 @@ impl Paragraph {
         let tree = doc.tree(self.part);
         let mut out = String::new();
         for &child in tree.children(self.node) {
-            // Direct runs and the runs inside a direct-child hyperlink both contribute
-            // text; append_run_text walks descendant w:t/w:tab/w:br of either.
-            if is_wml_element(tree, child, "r") || is_wml_element(tree, child, "hyperlink") {
+            // Direct runs, the runs inside a direct-child hyperlink, and the runs inside
+            // a tracked insertion all contribute text; append_run_text walks descendant
+            // w:t/w:tab/w:br of any of them. A w:del contributes nothing — its content is
+            // w:delText, not w:t — so this read is the *final* view of a redlined
+            // paragraph (deleted text reads back via `revisions`).
+            if is_wml_element(tree, child, "r")
+                || is_wml_element(tree, child, "hyperlink")
+                || is_wml_element(tree, child, "ins")
+            {
                 append_run_text(tree, child, &mut out);
             }
         }

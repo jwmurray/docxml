@@ -68,10 +68,10 @@ pub mod opc;
 pub mod xml;
 
 pub use api::{
-    Alignment, BorderEdge, BorderStyle, BreakType, Cell, DocGrid, DocGridType, Document, Endnote,
-    Footnote, FrameAnchor, FrameOptions, FrameWrap, HeaderFooter, HeaderFooterType, HyperlinkInfo,
-    Length, LineNumberRestart, LineNumbering, LineSpacing, NumberFormat, PageNumbering, Paragraph,
-    Picture, Pt, RgbColor, Row, Run, Section, Style, StyleType, TabAlignment, TabLeader, Table,
-    VMerge,
+    Alignment, BorderEdge, BorderStyle, BreakType, Cell, Comment, DocGrid, DocGridType, Document,
+    Endnote, Footnote, FrameAnchor, FrameOptions, FrameWrap, HeaderFooter, HeaderFooterType,
+    HyperlinkInfo, Length, LineNumberRestart, LineNumbering, LineSpacing, NumberFormat,
+    PageNumbering, Paragraph, Picture, Pt, Revision, RevisionKind, RgbColor, Row, Run, Section,
+    Style, StyleType, TabAlignment, TabLeader, Table, VMerge,
 };
 pub use error::{Error, Result};
