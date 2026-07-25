@@ -91,6 +91,11 @@ impl Run {
         self.node
     }
 
+    /// The part this run lives in (used by the note-reference read-backs).
+    pub(crate) fn part(&self) -> PartId {
+        self.part
+    }
+
     /// The run's text: `w:t` verbatim, `w:tab` as a tab, `w:br` / `w:cr` as a newline.
     pub fn text(&self, doc: &Document) -> String {
         let mut out = String::new();

@@ -27,6 +27,7 @@
 mod document;
 mod field;
 mod header;
+mod notes;
 mod numbering;
 mod paragraph;
 mod picture;
@@ -39,6 +40,7 @@ mod units;
 
 pub use document::Document;
 pub use header::{HeaderFooter, HeaderFooterType};
+pub use notes::{Endnote, Footnote};
 pub use numbering::NumberFormat;
 pub use paragraph::{HyperlinkInfo, Paragraph};
 pub use picture::Picture;
