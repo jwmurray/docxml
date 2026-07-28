@@ -280,3 +280,122 @@ fn snap_to_grid_precedes_spacing_in_ppr() {
     let spacing = xml.find("<w:spacing").expect("spacing present");
     assert!(snap < spacing, "snapToGrid must precede spacing: {xml}");
 }
+
+/// `w:pgBorders` is the only OOXML construction that draws a line down a page
+/// MARGIN, and it repeats on every page of the section by itself. All four
+/// edges, both attributes and the schema order round-trip.
+#[test]
+fn page_borders_round_trip_with_offset_and_display() {
+    use docxml::{BorderEdge, BorderStyle, PageBorderDisplay, PageBorderOffset, PageBorders};
+
+    let mut doc = Document::new();
+    let section = doc.sections()[0];
+    assert_eq!(
+        section.page_borders(&doc),
+        None,
+        "the blank template states none"
+    );
+
+    let edge = |style, size| BorderEdge {
+        style,
+        size,
+        space: 4,
+        color: None,
+    };
+    section.set_page_borders(
+        &mut doc,
+        PageBorders {
+            // The pleading-paper shape: two rules down the left as ONE double
+            // edge, one down the right.
+            left: Some(edge(BorderStyle::Double, 6)),
+            right: Some(edge(BorderStyle::Single, 6)),
+            offset_from: PageBorderOffset::Text,
+            display: PageBorderDisplay::AllPages,
+            ..PageBorders::default()
+        },
+    );
+
+    let reopened = reopen(&doc);
+    let read = reopened.sections()[0]
+        .page_borders(&reopened)
+        .expect("page borders persist");
+    assert_eq!(read.left.expect("left").style, BorderStyle::Double);
+    assert_eq!(read.left.expect("left").size, 6);
+    assert_eq!(read.left.expect("left").space, 4);
+    assert_eq!(read.right.expect("right").style, BorderStyle::Single);
+    assert_eq!(read.top, None, "an unstated edge is not drawn");
+    assert_eq!(read.bottom, None);
+    assert_eq!(read.offset_from, PageBorderOffset::Text);
+    assert_eq!(read.display, PageBorderDisplay::AllPages);
+
+    let part = reopened
+        .package()
+        .part("word/document.xml")
+        .expect("main part");
+    let xml = String::from_utf8_lossy(&part.data);
+    let pg = xml.find("<w:pgBorders").expect("pgBorders present");
+    // CT_SectPr order: pgBorders after pgMar, before lnNumType/docGrid.
+    let mar = xml.find("<w:pgMar").expect("pgMar present");
+    let grid = xml.find("<w:docGrid").expect("docGrid present");
+    assert!(
+        mar < pg && pg < grid,
+        "pgBorders is out of schema order: {xml}"
+    );
+    // CT_PageBorders child order: top, left, bottom, right — left before right
+    // is the only pair present here.
+    let left = xml[pg..].find("<w:left").expect("left edge");
+    let right = xml[pg..].find("<w:right").expect("right edge");
+    assert!(left < right, "edges are out of schema order: {xml}");
+    assert!(
+        xml[pg..pg + 120].contains(r#"w:offsetFrom="text""#),
+        "offsetFrom is written: {}",
+        &xml[pg..pg + 120]
+    );
+
+    // Clearing removes the element rather than writing an empty one.
+    let mut doc2 = reopened;
+    let s2 = doc2.sections()[0];
+    s2.clear_page_borders(&mut doc2);
+    let reopened2 = reopen(&doc2);
+    assert_eq!(reopened2.sections()[0].page_borders(&reopened2), None);
+}
+
+/// An edge dropped from a later write is dropped from the document: the setter
+/// rebuilds the managed edges rather than merging with whatever was there.
+#[test]
+fn page_borders_are_replaced_not_merged() {
+    use docxml::{BorderEdge, BorderStyle, PageBorders};
+
+    let mut doc = Document::new();
+    let section = doc.sections()[0];
+    let edge = BorderEdge {
+        style: BorderStyle::Single,
+        size: 4,
+        space: 1,
+        color: None,
+    };
+    section.set_page_borders(
+        &mut doc,
+        PageBorders {
+            top: Some(edge),
+            bottom: Some(edge),
+            left: Some(edge),
+            right: Some(edge),
+            ..PageBorders::default()
+        },
+    );
+    section.set_page_borders(
+        &mut doc,
+        PageBorders {
+            left: Some(edge),
+            ..PageBorders::default()
+        },
+    );
+
+    let reopened = reopen(&doc);
+    let read = reopened.sections()[0]
+        .page_borders(&reopened)
+        .expect("borders persist");
+    assert!(read.left.is_some());
+    assert_eq!((read.top, read.bottom, read.right), (None, None, None));
+}

@@ -71,7 +71,8 @@ pub use api::{
     Alignment, BorderEdge, BorderStyle, BreakType, Cell, Comment, DocGrid, DocGridType, Document,
     Endnote, Footnote, FrameAnchor, FrameOptions, FrameWrap, HeaderFooter, HeaderFooterType,
     HyperlinkInfo, Length, LineNumberRestart, LineNumbering, LineSpacing, NumberFormat,
-    PageNumbering, Paragraph, Picture, Pt, Revision, RevisionKind, RgbColor, Row, Run, Section,
-    Style, StyleType, TabAlignment, TabLeader, Table, VMerge,
+    PageBorderDisplay, PageBorderOffset, PageBorders, PageNumbering, Paragraph, Picture, Pt,
+    Revision, RevisionKind, RgbColor, Row, Run, Section, Style, StyleType, TabAlignment, TabLeader,
+    Table, VMerge,
 };
 pub use error::{Error, Result};

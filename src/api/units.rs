@@ -356,6 +356,100 @@ pub struct BorderEdge {
     pub color: Option<RgbColor>,
 }
 
+/// What a page border's offset is measured from (`w:pgBorders/@w:offsetFrom`).
+///
+/// The distinction is the whole of where the rules land. `Text` measures each
+/// edge's [`space`](BorderEdge::space) outward from the TEXT boundary, which is
+/// how pleading paper's margin rules are placed — they sit a few points outside
+/// the measure and move with it. `Page` measures inward from the paper edge,
+/// which is how a decorative frame is placed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PageBorderOffset {
+    /// `w:offsetFrom="page"` — measured from the edge of the paper.
+    Page,
+    /// `w:offsetFrom="text"` — measured from the text boundary. Word's default
+    /// when the attribute is absent.
+    #[default]
+    Text,
+}
+
+impl PageBorderOffset {
+    pub(crate) fn to_val(self) -> &'static str {
+        match self {
+            PageBorderOffset::Page => "page",
+            PageBorderOffset::Text => "text",
+        }
+    }
+
+    pub(crate) fn from_val(val: &str) -> Option<PageBorderOffset> {
+        match val.trim() {
+            "page" => Some(PageBorderOffset::Page),
+            "text" => Some(PageBorderOffset::Text),
+            _ => None,
+        }
+    }
+}
+
+/// Which pages a page border is drawn on (`w:pgBorders/@w:display`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PageBorderDisplay {
+    /// `w:display="allPages"`, and the behavior when the attribute is absent.
+    #[default]
+    AllPages,
+    /// `w:display="firstPage"`.
+    FirstPage,
+    /// `w:display="notFirstPage"`.
+    NotFirstPage,
+}
+
+impl PageBorderDisplay {
+    pub(crate) fn to_val(self) -> &'static str {
+        match self {
+            PageBorderDisplay::AllPages => "allPages",
+            PageBorderDisplay::FirstPage => "firstPage",
+            PageBorderDisplay::NotFirstPage => "notFirstPage",
+        }
+    }
+
+    pub(crate) fn from_val(val: &str) -> Option<PageBorderDisplay> {
+        match val.trim() {
+            "allPages" => Some(PageBorderDisplay::AllPages),
+            "firstPage" => Some(PageBorderDisplay::FirstPage),
+            "notFirstPage" => Some(PageBorderDisplay::NotFirstPage),
+            _ => None,
+        }
+    }
+}
+
+/// A section's page borders (`w:sectPr/w:pgBorders`).
+///
+/// Page borders are the only OOXML construction that draws a line down a page
+/// MARGIN. A paragraph border draws around a paragraph and a table border around
+/// a table; neither reaches the margin, and a framed paragraph carrying a border
+/// is drawn by some layout engines and ignored by others. `w:pgBorders` is what
+/// Word implements, and it repeats on every page of the section by itself.
+///
+/// Each edge is an ordinary [`BorderEdge`], so `w:val="double"` draws the two
+/// parallel lines of ruled pleading paper as ONE edge rather than as two
+/// borders, and [`space`](BorderEdge::space) is the offset from whatever
+/// [`offset_from`](Self::offset_from) names — in points, and Word clamps it to
+/// 0..=31.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct PageBorders {
+    /// The top edge, or `None` for none.
+    pub top: Option<BorderEdge>,
+    /// The bottom edge, or `None` for none.
+    pub bottom: Option<BorderEdge>,
+    /// The left edge, or `None` for none.
+    pub left: Option<BorderEdge>,
+    /// The right edge, or `None` for none.
+    pub right: Option<BorderEdge>,
+    /// What each edge's `space` is measured from.
+    pub offset_from: PageBorderOffset,
+    /// Which pages the borders are drawn on.
+    pub display: PageBorderDisplay,
+}
+
 /// A measurement in points, used for font size (`w:sz`).
 ///
 /// WordprocessingML stores font size in *half-points*, so [`Pt`] serializes to `w:val`

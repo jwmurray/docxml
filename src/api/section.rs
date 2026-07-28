@@ -5,7 +5,8 @@ use crate::xml::{NodeId, XmlTree};
 
 use super::{
     DocGrid, DocGridType, Document, Length, LineNumberRestart, LineNumbering, NumberFormat,
-    PageNumbering, PartId, Pt, is_wml_element, ordered_insert_index, rank_in,
+    PageBorderDisplay, PageBorderOffset, PageBorders, PageNumbering, PartId, Pt,
+    insert_border_edge, is_wml_element, ordered_insert_index, rank_in, read_border_edge,
 };
 
 /// Canonical `w:sectPr` child order (ECMA-376 §17.6.17, `CT_SectPr` — the
@@ -13,6 +14,9 @@ use super::{
 /// only. New properties are inserted to keep `w:sectPr`'s children in this order so the
 /// output is schema-valid: header/footer references come first, then `pgSz`, then `pgMar`.
 /// Unlisted children rank last and stay after authored properties.
+/// Canonical `w:pgBorders` child order (ECMA-376 §17.6.10, `CT_PageBorders`).
+const PG_BORDERS_ORDER: &[&str] = &["top", "left", "bottom", "right"];
+
 const SECTPR_ORDER: &[&str] = &[
     "headerReference",
     "footerReference",
@@ -311,6 +315,117 @@ impl Section {
             tree.set_attr(el, space_attr, space.to_string());
         }
         *self
+    }
+
+    /// This section's page borders (`w:sectPr/w:pgBorders`), or `None` when the
+    /// element is absent.
+    ///
+    /// An edge whose `w:val` names a style this API does not model reads back as
+    /// `None` (the [`BorderStyle`](super::BorderStyle) enum is closed), and an
+    /// absent or unrecognized `w:offsetFrom` / `w:display` reads as the schema
+    /// default — `text` and `allPages`.
+    pub fn page_borders(&self, doc: &Document) -> Option<PageBorders> {
+        let el = self.sect_child(doc.tree(self.part), "pgBorders")?;
+        let tree = doc.tree(self.part);
+        let attr = |name: &str| tree.attr(el, &doc.qn(self.part, name));
+        Some(PageBorders {
+            top: read_border_edge(doc, self.part, el, "top"),
+            bottom: read_border_edge(doc, self.part, el, "bottom"),
+            left: read_border_edge(doc, self.part, el, "left"),
+            right: read_border_edge(doc, self.part, el, "right"),
+            offset_from: attr("offsetFrom")
+                .and_then(PageBorderOffset::from_val)
+                .unwrap_or_default(),
+            display: attr("display")
+                .and_then(PageBorderDisplay::from_val)
+                .unwrap_or_default(),
+        })
+    }
+
+    /// Set this section's page borders (`w:sectPr/w:pgBorders`).
+    ///
+    /// Page borders are the only OOXML construction that draws a line down a page
+    /// MARGIN, and they repeat on every page of the section without anything being
+    /// authored per page. That makes them the construction for ruled pleading
+    /// paper: a `w:val="double"` left edge is the two parallel rules such paper
+    /// carries, written as one edge.
+    ///
+    /// The four edges are (re)built in `CT_PageBorders` order — `w:top`, `w:left`,
+    /// `w:bottom`, `w:right` (ECMA-376 §17.6.10; [`PG_BORDERS_ORDER`]) — so any
+    /// pass-through child stays after them, and each edge's
+    /// `w:val`/`w:sz`/`w:space`/`w:color` are written exactly as paragraph borders
+    /// are. `w:pgBorders` sits in `CT_SectPr` after `w:paperSrc` and before
+    /// `w:lnNumType` (present in [`SECTPR_ORDER`]).
+    ///
+    /// Setting borders with all four edges `None` still writes the element, with
+    /// its attributes and no edges — that is a section that states borders and
+    /// draws none, which is different from a section that states nothing. Use
+    /// [`clear_page_borders`](Self::clear_page_borders) for the latter.
+    ///
+    /// ```
+    /// use docxml::{BorderEdge, BorderStyle, Document, PageBorderOffset, PageBorders};
+    ///
+    /// let mut doc = Document::new();
+    /// let section = doc.sections()[0];
+    /// let rule = |style| BorderEdge { style, size: 6, space: 4, color: None };
+    /// section.set_page_borders(
+    ///     &mut doc,
+    ///     PageBorders {
+    ///         left: Some(rule(BorderStyle::Double)),
+    ///         right: Some(rule(BorderStyle::Single)),
+    ///         offset_from: PageBorderOffset::Text,
+    ///         ..PageBorders::default()
+    ///     },
+    /// );
+    /// let read = section.page_borders(&doc).unwrap();
+    /// assert_eq!(read.left.unwrap().style, BorderStyle::Double);
+    /// assert!(read.top.is_none());
+    /// ```
+    pub fn set_page_borders(&self, doc: &mut Document, borders: PageBorders) -> Section {
+        let el = self.ensure_sect_child(doc, "pgBorders");
+        // CT_PageBorders attribute order: zOrder, display, offsetFrom. `zOrder`
+        // is left to whatever the part carried: it decides whether the border
+        // prints in front of or behind page content, which is a question about
+        // the content and not about the border.
+        let display_attr = doc.qn(self.part, "display");
+        let offset_attr = doc.qn(self.part, "offsetFrom");
+        {
+            let tree = doc.tree_mut(self.part);
+            tree.remove_attr(el, &display_attr);
+            tree.remove_attr(el, &offset_attr);
+            tree.set_attr(el, display_attr, borders.display.to_val().to_string());
+            tree.set_attr(el, offset_attr, borders.offset_from.to_val().to_string());
+        }
+        // Remove the four managed edges, then rebuild the present ones in schema
+        // order, exactly as paragraph and cell borders do.
+        for (local, edge) in [
+            ("top", borders.top),
+            ("left", borders.left),
+            ("bottom", borders.bottom),
+            ("right", borders.right),
+        ] {
+            let existing = {
+                let tree = doc.tree(self.part);
+                tree.children(el)
+                    .iter()
+                    .copied()
+                    .find(|&c| is_wml_element(tree, c, local))
+            };
+            if let Some(node) = existing {
+                doc.tree_mut(self.part).remove_from_parent(node);
+            }
+            if let Some(edge) = edge {
+                insert_border_edge(doc, self.part, el, local, edge, PG_BORDERS_ORDER);
+            }
+        }
+        *self
+    }
+
+    /// Remove this section's page borders, deleting `w:sectPr/w:pgBorders`.
+    pub fn clear_page_borders(&self, doc: &mut Document) {
+        if let Some(el) = self.sect_child(doc.tree(self.part), "pgBorders") {
+            doc.tree_mut(self.part).remove_from_parent(el);
+        }
     }
 
     /// Remove this section's document grid, deleting `w:sectPr/w:docGrid`.

@@ -52,8 +52,8 @@ pub use style::{Style, StyleType};
 pub use table::{Cell, Row, Table, VMerge};
 pub use units::{
     Alignment, BorderEdge, BorderStyle, BreakType, DocGrid, DocGridType, FrameAnchor, FrameOptions,
-    FrameWrap, Length, LineNumberRestart, LineNumbering, LineSpacing, PageNumbering, Pt, RgbColor,
-    TabAlignment, TabLeader,
+    FrameWrap, Length, LineNumberRestart, LineNumbering, LineSpacing, PageBorderDisplay,
+    PageBorderOffset, PageBorders, PageNumbering, Pt, RgbColor, TabAlignment, TabLeader,
 };
 
 use crate::xml::{NodeId, XmlTree};
