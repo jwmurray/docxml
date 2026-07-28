@@ -200,3 +200,83 @@ fn sect_pr_children_stay_in_schema_order() {
     assert!(ln < pg, "lnNumType before pgNumType");
     assert!(pg < grid, "pgNumType before docGrid");
 }
+
+/// `w:snapToGrid` is the paragraph-side half of the document grid: it says whether
+/// *this* paragraph's lines occupy whole grid cells. All three authored states
+/// round-trip, and they are three states, not two — an absent element inherits,
+/// a bare element states "snap", and `w:val="0"` states "do not".
+#[test]
+fn snap_to_grid_round_trips_all_three_states() {
+    let mut doc = Document::new();
+    let inherit = doc.add_paragraph("inherits");
+    let bound = doc.add_paragraph("grid-bound");
+    let free = doc.add_paragraph("free");
+
+    assert_eq!(inherit.snap_to_grid(&doc), None, "absent by default");
+    bound.set_snap_to_grid(&mut doc, Some(true));
+    free.set_snap_to_grid(&mut doc, Some(false));
+
+    let reopened = reopen(&doc);
+    let paras = reopened.paragraphs();
+    let by_text = |t: &str| {
+        *paras
+            .iter()
+            .find(|p| p.text(&reopened) == t)
+            .unwrap_or_else(|| panic!("no paragraph {t}"))
+    };
+    assert_eq!(by_text("inherits").snap_to_grid(&reopened), None);
+    assert_eq!(by_text("grid-bound").snap_to_grid(&reopened), Some(true));
+    assert_eq!(by_text("free").snap_to_grid(&reopened), Some(false));
+
+    // The serialization is the one Word writes: bare element for on, an explicit
+    // zero for off. A bare element for "off" would read back as "on" everywhere.
+    let part = reopened
+        .package()
+        .part("word/document.xml")
+        .expect("main part");
+    let xml = String::from_utf8_lossy(&part.data);
+    assert!(
+        xml.contains("<w:snapToGrid/>"),
+        "on is a bare element: {xml}"
+    );
+    assert!(
+        xml.contains(r#"<w:snapToGrid w:val="0"/>"#),
+        "off is an explicit zero: {xml}"
+    );
+
+    // Clearing removes the element rather than writing the default.
+    let target = by_text("free");
+    let mut doc2 = reopened;
+    target.set_snap_to_grid(&mut doc2, None);
+    let reopened2 = reopen(&doc2);
+    let cleared = *reopened2
+        .paragraphs()
+        .iter()
+        .find(|p| p.text(&reopened2) == "free")
+        .expect("paragraph survives");
+    assert_eq!(cleared.snap_to_grid(&reopened2), None);
+}
+
+/// `w:snapToGrid` sits between `w:adjustRightInd` and `w:spacing` in `CT_PPr`
+/// (ECMA-376 §17.3.1.32). A paragraph that carries both must serialize in that
+/// order or Word rejects the part.
+#[test]
+fn snap_to_grid_precedes_spacing_in_ppr() {
+    use docxml::LineSpacing;
+
+    let mut doc = Document::new();
+    let p = doc.add_paragraph("both");
+    // Deliberately set spacing FIRST: order is the writer's job, not the caller's.
+    p.set_line_spacing(&mut doc, LineSpacing::Exactly(Pt(23.1)));
+    p.set_snap_to_grid(&mut doc, Some(true));
+
+    let reopened = reopen(&doc);
+    let part = reopened
+        .package()
+        .part("word/document.xml")
+        .expect("main part");
+    let xml = String::from_utf8_lossy(&part.data);
+    let snap = xml.find("<w:snapToGrid").expect("snapToGrid present");
+    let spacing = xml.find("<w:spacing").expect("spacing present");
+    assert!(snap < spacing, "snapToGrid must precede spacing: {xml}");
+}

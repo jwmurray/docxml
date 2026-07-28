@@ -658,6 +658,58 @@ impl Paragraph {
         *self
     }
 
+    /// Whether the paragraph's lines snap to the document grid (`w:pPr/w:snapToGrid`), as
+    /// authored: `Some(true)` for a bare `w:snapToGrid`, `Some(false)` for an explicit
+    /// `w:val="0"`/`"false"`, and `None` when the element is absent.
+    ///
+    /// The distinction between `Some(true)` and `None` is not cosmetic. `w:snapToGrid`
+    /// defaults to ON, so an absent element and a present one mean the same thing to a
+    /// layout engine — but only a present one *states* it, and a paragraph that inherits a
+    /// style with `w:snapToGrid w:val="0"` needs the bare element to turn snapping back on.
+    /// [`set_snap_to_grid`](Self::set_snap_to_grid) writes what you ask for and this reads
+    /// it back unchanged.
+    pub fn snap_to_grid(&self, doc: &Document) -> Option<bool> {
+        let tree = doc.tree(self.part);
+        let el = self.ppr_child(tree, "snapToGrid")?;
+        Some(match tree.attr(el, &doc.qn(self.part, "val")) {
+            Some(v) => !matches!(v, "0" | "false"),
+            None => true,
+        })
+    }
+
+    /// State (or clear) whether the paragraph's lines snap to the document grid
+    /// (`w:pPr/w:snapToGrid`).
+    ///
+    /// With a document grid in effect ([`Section::set_doc_grid`](crate::Section::set_doc_grid)
+    /// with [`DocGridType::Lines`](crate::DocGridType::Lines)), a snapping paragraph's lines
+    /// occupy whole grid cells measured from the top of the text block, so a paragraph that
+    /// follows non-snapping content returns to the grid instead of inheriting its offset.
+    /// Turning it off (`Some(false)`, written as `w:val="0"`) exempts the paragraph, which
+    /// then lays out at its own leading — the pairing that lets one document carry both
+    /// grid-bound and freely-led text.
+    ///
+    /// `Some(true)` writes a bare `w:snapToGrid`, `Some(false)` writes `w:snapToGrid
+    /// w:val="0"`, and `None` removes the element (restoring inheritance). `w:snapToGrid`
+    /// sits in `CT_PPr` order after `w:adjustRightInd` and before `w:spacing`
+    /// (ECMA-376 §17.3.1.32; present in [`PPR_ORDER`]).
+    pub fn set_snap_to_grid(&self, doc: &mut Document, snap: Option<bool>) -> Paragraph {
+        let Some(on) = snap else {
+            if let Some(el) = self.ppr_child(doc.tree(self.part), "snapToGrid") {
+                doc.tree_mut(self.part).remove_from_parent(el);
+            }
+            return *self;
+        };
+        let el = self.ensure_ppr_child(doc, "snapToGrid");
+        let val = doc.qn(self.part, "val");
+        let tree = doc.tree_mut(self.part);
+        if on {
+            tree.remove_attr(el, &val);
+        } else {
+            tree.set_attr(el, val, "0".to_string());
+        }
+        *self
+    }
+
     /// This paragraph's frame (`w:pPr/w:framePr`), or `None` when the paragraph is not framed.
     ///
     /// Reads `w:w` / `w:h` (as twips [`Length`]s) into
