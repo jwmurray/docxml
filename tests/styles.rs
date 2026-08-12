@@ -132,7 +132,7 @@ fn authors_paragraph_style_and_round_trips() {
         .set_size(&mut doc, Pt(14.0))
         .set_alignment(&mut doc, Alignment::Center);
 
-    let p = doc.add_paragraph("Hepworth Legal");
+    let p = doc.add_paragraph("Acme Corporation");
     p.set_style_id(&mut doc, "FirmTitle");
 
     let dir = tempfile::tempdir().unwrap();
