@@ -231,6 +231,51 @@ impl Run {
         *self
     }
 
+    /// The run's highlight color, if `w:rPr/w:highlight` is set (direct properties only).
+    ///
+    /// Returns the raw `w:val` — one of the `ST_HighlightColor` names such as `"yellow"`,
+    /// `"green"`, `"cyan"`, or `"none"` (an explicit no-highlight that Word sometimes
+    /// writes). Absence of the element reads as `None`. Direct properties only — see the
+    /// [type docs](Self#direct-properties-only).
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use docxml::Document;
+    ///
+    /// let mut doc = Document::new();
+    /// let p = doc.add_paragraph("");
+    /// let r = p.add_run(&mut doc, "fill me in");
+    /// assert_eq!(r.highlight(&doc), None);
+    /// r.set_highlight(&mut doc, Some("yellow"));
+    /// assert_eq!(r.highlight(&doc).as_deref(), Some("yellow"));
+    /// ```
+    pub fn highlight(&self, doc: &Document) -> Option<String> {
+        let tree = doc.tree(self.part);
+        let hl = self.rpr_child(tree, "highlight")?;
+        tree.attr(hl, &doc.qn(self.part, "val")).map(str::to_owned)
+    }
+
+    /// Set or clear the highlight.
+    ///
+    /// `Some(color)` writes `w:rPr/w:highlight w:val="color"` (creating `w:rPr` in
+    /// schema order if needed); `color` is an `ST_HighlightColor` name and is written
+    /// verbatim. `None` removes any `w:highlight` — removal is the off state, no
+    /// `w:val="none"` is emitted. The rest of the run's properties are untouched, which
+    /// is what a template merge wants: replace a highlighted placeholder's text, drop the
+    /// highlight, keep the font.
+    pub fn set_highlight(&self, doc: &mut Document, color: Option<&str>) -> Run {
+        match color {
+            Some(color) => {
+                let hl = self.ensure_rpr_child(doc, "highlight");
+                let val = doc.qn(self.part, "val");
+                doc.tree_mut(self.part).set_attr(hl, val, color);
+            }
+            None => self.remove_rpr_child(doc, "highlight"),
+        }
+        *self
+    }
+
     /// Set the font size. Writes both `w:sz` and `w:szCs` (complex-script size) with the
     /// value in half-points, matching python-docx.
     pub fn set_size(&self, doc: &mut Document, size: Pt) -> Run {

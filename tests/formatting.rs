@@ -206,3 +206,63 @@ fn find_first_named(tree: &XmlTree, qname: &str) -> Option<NodeId> {
     tree.descendants(tree.root())
         .find(|&n| tree.name(n) == Some(qname))
 }
+
+// 6. Highlight: set, read, save, reopen, clear — and w:highlight lands after w:b in
+//    w:rPr (schema order), while clearing it leaves the other properties alone. This is
+//    the template-merge case: replace a yellow placeholder's text, drop the yellow, keep
+//    the font.
+#[test]
+fn highlight_set_read_roundtrip_and_clear() {
+    let mut doc = Document::new();
+    let p = doc.add_paragraph("");
+    let r = p.add_run(&mut doc, "Client Name");
+    assert_eq!(r.highlight(&doc), None);
+
+    r.bold(&mut doc, true);
+    r.set_highlight(&mut doc, Some("yellow"));
+    assert_eq!(r.highlight(&doc).as_deref(), Some("yellow"));
+
+    let dir = tempfile::tempdir().unwrap();
+    let saved_path = dir.path().join("highlight.docx");
+    doc.save(&saved_path).unwrap();
+    let doc_xml = String::from_utf8(document_xml(&saved_path)).unwrap();
+    let b = doc_xml.find("<w:b").expect("w:b written");
+    let hl = doc_xml.find("<w:highlight").expect("w:highlight written");
+    assert!(b < hl, "w:b must precede w:highlight in w:rPr: {doc_xml}");
+    assert!(doc_xml.contains("yellow"), "{doc_xml}");
+
+    let mut reopened = Document::open(&saved_path).unwrap();
+    let run = reopened.paragraphs()[0].runs(&reopened)[0];
+    assert_eq!(run.highlight(&reopened).as_deref(), Some("yellow"));
+    assert!(run.is_bold(&reopened));
+
+    run.set_highlight(&mut reopened, None);
+    assert_eq!(run.highlight(&reopened), None);
+    assert!(
+        run.is_bold(&reopened),
+        "clearing the highlight must not touch bold"
+    );
+    let cleared_path = dir.path().join("no-highlight.docx");
+    reopened.save(&cleared_path).unwrap();
+    let cleared_xml = String::from_utf8(document_xml(&cleared_path)).unwrap();
+    assert!(!cleared_xml.contains("<w:highlight"), "{cleared_xml}");
+    assert!(cleared_xml.contains("<w:b"), "bold survived: {cleared_xml}");
+}
+
+// 7. set_highlight on a run with no w:rPr creates one; the value is written verbatim.
+#[test]
+fn highlight_creates_rpr_when_absent() {
+    let mut doc = Document::new();
+    let p = doc.add_paragraph("");
+    let r = p.add_run(&mut doc, "x");
+    r.set_highlight(&mut doc, Some("green"));
+    assert_eq!(r.highlight(&doc).as_deref(), Some("green"));
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("green.docx");
+    doc.save(&path).unwrap();
+    let xml = String::from_utf8(document_xml(&path)).unwrap();
+    assert!(xml.contains("<w:rPr>"), "{xml}");
+    assert!(xml.contains("<w:highlight"), "{xml}");
+    assert!(xml.contains("green"), "{xml}");
+}
